@@ -41,3 +41,18 @@ def test_raises_on_bad_video(tmp_path: Path) -> None:
     bad.write_bytes(b"not a video")
     with pytest.raises(RuntimeError, match="Cannot open video file"):
         list(iter_frames(bad, ROI_FULL))
+
+
+def test_iter_frames_debug_saves_png(sample_video: Path, tmp_path: Path) -> None:
+    debug_dir = tmp_path / "debug"
+    frames = list(
+        iter_frames(
+            sample_video, ROI_LEFT, target_fps=2, debug_frames=True, debug_frames_dir=debug_dir
+        )
+    )
+    assert len(frames) > 0
+    pngs = list(debug_dir.glob("*.png"))
+    assert len(pngs) == len(frames)
+    for p in pngs:
+        assert p.exists()
+        assert p.suffix == ".png"

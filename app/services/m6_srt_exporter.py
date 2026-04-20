@@ -46,6 +46,7 @@ def export(
     task_id: str,
     audio_duration: float = 0.0,
     cv_detections: Optional[List] = None,
+    cv_total_frames: int = 0,
 ) -> Dict[str, str]:
     """Write SRT files and metadata.json, return a mapping of label → file path.
 
@@ -61,6 +62,8 @@ def export(
         Duration of the source audio in seconds.
     cv_detections:
         Raw detections from M4 used for coverage metrics.
+    cv_total_frames:
+        Total number of frames processed in M4.
 
     Returns
     -------
@@ -91,9 +94,9 @@ def export(
         logger.info("M6 – wrote speaker SRT: %s (%d segments)", spk_path, len(spk_segs))
 
     # Metadata.json
-    total_frames = len(cv_detections) if cv_detections else 0
-    detected_frames = sum(1 for d in (cv_detections or []) if d.agent_name != "unknown")
-    cv_coverage = round(detected_frames / total_frames, 4) if total_frames > 0 else 0.0
+    # Compute cv_coverage as fraction of frames where a speaker was detected
+    detected_frames = len(cv_detections) if cv_detections else 0
+    cv_coverage = round(detected_frames / cv_total_frames, 4) if cv_total_frames > 0 else 0.0
 
     metadata: Dict[str, Any] = {
         "task_id": task_id,

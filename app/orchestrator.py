@@ -130,7 +130,7 @@ def run_pipeline(
 
         _update(task, "DETECTING_MIC", ModuleTag.m4_cv)
         logger.info("[%s] M4 – CVMicDetector", task_id)
-        cv_detections = m4_cv_mic_detector.detect_speakers(
+        cv_detections, cv_total_frames = m4_cv_mic_detector.detect_speakers(
             video_path=video_path,
             roi=roi,
             target_fps=settings.frame_rate,
@@ -155,6 +155,7 @@ def run_pipeline(
             task_id,
             audio_duration=audio_duration,
             cv_detections=cv_detections,
+            cv_total_frames=cv_total_frames,
         )
 
         # Package results into a ZIP

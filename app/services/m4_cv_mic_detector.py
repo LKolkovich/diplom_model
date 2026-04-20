@@ -54,7 +54,7 @@ def detect_speakers(
     target_fps: int,
     templates_dir: str | Path,
     phash_threshold: int = 10,
-) -> List[CVDetection]:
+) -> tuple[List[CVDetection], int]:
     """Run the full CV mic-detection pass over the video.
 
     Parameters
@@ -72,18 +72,40 @@ def detect_speakers(
 
     Returns
     -------
-    list[CVDetection]
-        One entry per frame where a speaking agent was detected.
+    tuple[List[CVDetection], int]
+        A list of speaking detections and the total number of frames processed.
     """
     agent_templates: List[AgentTemplate] = load_agent_templates(templates_dir)
 
     detections: List[CVDetection] = []
+    total_frames: int = 0
 
+    # ACTIVITY GATE ASSUMPTION
+    # -------------------------
+    # This module assumes the ROI is configured to cover an area that shows
+    # a speaker's portrait ONLY when they are actively speaking — for example,
+    # the Discord voice overlay speaking indicator, which appears and disappears
+    # as participants speak.
+    #
+    # If the ROI contains a portrait that is always visible (e.g. a static
+    # webcam feed), every processed frame will produce a CVDetection regardless
+    # of whether the person is speaking. In that case, configure the ROI to
+    # cover only the speaking-activity indicator region.
+    #
+    # Correct ROI examples:
+    #   - Discord overlay: the area where the speaking avatar flashes
+    #   - Valorant comms UI: the player card that highlights on voice activity
+    #
+    # Incorrect ROI examples:
+    #   - Full screen webcam feed
+    #   - Static player list with always-visible avatars
     for ef in iter_frames(video_path, roi, target_fps):
         ts = ef.timestamp
         frame = ef.frame
         if frame.size == 0:
             continue
+
+        total_frames += 1  # count every processed frame
 
         # Crop fixed portrait area from top-left of ROI
         portrait = frame[0:PORTRAIT_H, 0:PORTRAIT_W]
@@ -101,5 +123,5 @@ def detect_speakers(
                 CVDetection(timestamp=ts, agent_name=agent_name, confidence=confidence)
             )
 
-    logger.info("M4 – detected %d speaking events", len(detections))
-    return detections
+    logger.info("M4 – detected %d speaking events across %d frames", len(detections), total_frames)
+    return detections, total_frames

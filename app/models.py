@@ -25,23 +25,18 @@ class TaskState(BaseModel):
     task_id: str
     status: TaskStatus = TaskStatus.pending
     progress: int = Field(default=0, ge=0, le=100)
+    stage: str = "INITIALIZING"
+    message: str = "Waiting to start"
     current_module: Optional[ModuleTag] = None
     error: Optional[str] = None
     result_files: Dict[str, str] = Field(default_factory=dict)
 
 
-class ProcessRequest(BaseModel):
-    video_path: str = Field(description="Absolute or relative path to the source video file")
-    audio_path: Optional[str] = Field(
-        default=None,
-        description="Pre-extracted audio file path. When omitted the audio is extracted from video_path.",
-    )
-    language: Optional[str] = Field(
-        default=None,
-        description="ISO-639-1 language code, e.g. 'en'. Auto-detected when omitted.",
-    )
+class ProcessConfig(BaseModel):
     min_speakers: Optional[int] = Field(default=None, ge=1, le=10)
     max_speakers: Optional[int] = Field(default=None, ge=1, le=10)
+    language: Optional[str] = Field(default=None)
+    initial_prompt: Optional[str] = Field(default=None)
 
 
 class ProcessResponse(BaseModel):
@@ -53,6 +48,8 @@ class StatusResponse(BaseModel):
     task_id: str
     status: TaskStatus
     progress: int
+    stage: str
+    message: str
     current_module: Optional[ModuleTag]
     error: Optional[str]
 
@@ -94,7 +91,6 @@ class ASRSegment(BaseModel):
 
 
 class CVDetection(BaseModel):
-    frame_index: int
     timestamp: float
-    agent: str
+    agent_name: str
     confidence: float

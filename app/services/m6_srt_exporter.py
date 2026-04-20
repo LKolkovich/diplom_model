@@ -7,9 +7,10 @@ Converts FusedSegment lists into SubRip (SRT) subtitle files:
 
 from __future__ import annotations
 
+import json
 import logging
 from pathlib import Path
-from typing import Dict, List
+from typing import Any, Dict, List, Optional
 
 from app.models import FusedSegment
 
@@ -43,8 +44,11 @@ def export(
     segments: List[FusedSegment],
     output_dir: str | Path,
     task_id: str,
+    audio_duration: float = 0.0,
+    cv_detections: Optional[List] = None,
+    cv_total_frames: int = 0,
 ) -> Dict[str, str]:
-    """Write SRT files and return a mapping of label → file path.
+    """Write SRT files and metadata.json, return a mapping of label → file path.
 
     Parameters
     ----------
@@ -53,32 +57,57 @@ def export(
     output_dir:
         Directory to write the SRT files into.
     task_id:
-        Used to namespace the output filenames.
+        Used for metadata.
+    audio_duration:
+        Duration of the source audio in seconds.
+    cv_detections:
+        Raw detections from M4 used for coverage metrics.
+    cv_total_frames:
+        Total number of frames processed in M4.
 
     Returns
     -------
     dict
-        Keys are ``"combined"`` and per-agent names; values are file paths.
+        Keys are label; values are file paths.
     """
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
 
     result: Dict[str, str] = {}
 
-    combined_path = out / f"{task_id}_combined.srt"
+    # Combined SRT
+    combined_path = out / "_combined.srt"
     combined_path.write_text(_build_srt(segments, include_speaker=True), encoding="utf-8")
     result["combined"] = str(combined_path)
     logger.info("M6 – wrote combined SRT: %s", combined_path)
 
+    # Per-speaker SRTs
     by_speaker: Dict[str, List[FusedSegment]] = {}
     for seg in segments:
         by_speaker.setdefault(seg.speaker, []).append(seg)
 
     for speaker, spk_segs in sorted(by_speaker.items()):
         safe_name = speaker.replace(" ", "_").replace("/", "-")
-        spk_path = out / f"{task_id}_{safe_name}.srt"
+        spk_path = out / f"{safe_name}.srt"
         spk_path.write_text(_build_srt(spk_segs, include_speaker=False), encoding="utf-8")
         result[speaker] = str(spk_path)
         logger.info("M6 – wrote speaker SRT: %s (%d segments)", spk_path, len(spk_segs))
+
+    # Metadata.json
+    # Compute cv_coverage as fraction of frames where a speaker was detected
+    detected_frames = len(cv_detections) if cv_detections else 0
+    cv_coverage = round(detected_frames / cv_total_frames, 4) if cv_total_frames > 0 else 0.0
+
+    metadata: Dict[str, Any] = {
+        "task_id": task_id,
+        "segment_count": len(segments),
+        "speakers": list(by_speaker.keys()),
+        "audio_duration": round(audio_duration, 3),
+        "cv_coverage": cv_coverage,
+    }
+    meta_path = out / "metadata.json"
+    with meta_path.open("w", encoding="utf-8") as f:
+        json.dump(metadata, f, indent=2)
+    result["metadata"] = str(meta_path)
 
     return result

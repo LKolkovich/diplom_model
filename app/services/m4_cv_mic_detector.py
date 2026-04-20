@@ -40,57 +40,12 @@ from app.utils.cv_logic import (
     AgentTemplate,
     identify_agent,
     load_agent_templates,
-    match_template,
-    multi_scale_match,
 )
 
 logger = logging.getLogger(__name__)
 
-MIC_ICON_PATH = Path("templates") / "mic_active.png"
-
-PORTRAIT_OFFSET_X = 2
-PORTRAIT_OFFSET_Y = -2
 PORTRAIT_W = 36
 PORTRAIT_H = 36
-
-MATCH_THRESHOLD = 0.60
-
-
-def _load_mic_template() -> Optional[np.ndarray]:
-    if MIC_ICON_PATH.exists():
-        img = cv2.imread(str(MIC_ICON_PATH))
-        if img is not None:
-            logger.info("M4 – loaded mic-active template from %s", MIC_ICON_PATH)
-            return img
-    logger.warning(
-        "M4 – mic-active template not found at '%s'. "
-        "Falling back to brightness-based detection.",
-        MIC_ICON_PATH,
-    )
-    return None
-
-
-def _brightness_has_activity(roi_frame: np.ndarray, threshold: int = 200) -> bool:
-    """Fallback heuristic: check for very bright pixels in the ROI.
-
-    The Valorant speaking indicator lights up brightly.  When no mic template
-    is available we use this as a coarse activity detector.
-    """
-    gray = cv2.cvtColor(roi_frame, cv2.COLOR_BGR2GRAY)
-    _, bright = cv2.threshold(gray, threshold, 255, cv2.THRESH_BINARY)
-    ratio = np.count_nonzero(bright) / bright.size
-    return bool(ratio > 0.02)
-
-
-def _extract_portrait(
-    roi_frame: np.ndarray,
-    icon_top_left: tuple[int, int],
-) -> np.ndarray:
-    x = max(0, icon_top_left[0] + PORTRAIT_OFFSET_X)
-    y = max(0, icon_top_left[1] + PORTRAIT_OFFSET_Y)
-    x2 = min(roi_frame.shape[1], x + PORTRAIT_W)
-    y2 = min(roi_frame.shape[0], y + PORTRAIT_H)
-    return roi_frame[y:y2, x:x2]
 
 
 def detect_speakers(
@@ -99,7 +54,7 @@ def detect_speakers(
     target_fps: int,
     templates_dir: str | Path,
     phash_threshold: int = 10,
-) -> List[CVDetection]:
+) -> tuple[List[CVDetection], int]:
     """Run the full CV mic-detection pass over the video.
 
     Parameters
@@ -117,54 +72,56 @@ def detect_speakers(
 
     Returns
     -------
-    list[CVDetection]
-        One entry per frame where a speaking agent was detected.
+    tuple[List[CVDetection], int]
+        A list of speaking detections and the total number of frames processed.
     """
     agent_templates: List[AgentTemplate] = load_agent_templates(templates_dir)
-    mic_template: Optional[np.ndarray] = _load_mic_template()
 
     detections: List[CVDetection] = []
+    total_frames: int = 0
 
+    # ACTIVITY GATE ASSUMPTION
+    # -------------------------
+    # This module assumes the ROI is configured to cover an area that shows
+    # a speaker's portrait ONLY when they are actively speaking — for example,
+    # the Discord voice overlay speaking indicator, which appears and disappears
+    # as participants speak.
+    #
+    # If the ROI contains a portrait that is always visible (e.g. a static
+    # webcam feed), every processed frame will produce a CVDetection regardless
+    # of whether the person is speaking. In that case, configure the ROI to
+    # cover only the speaking-activity indicator region.
+    #
+    # Correct ROI examples:
+    #   - Discord overlay: the area where the speaking avatar flashes
+    #   - Valorant comms UI: the player card that highlights on voice activity
+    #
+    # Incorrect ROI examples:
+    #   - Full screen webcam feed
+    #   - Static player list with always-visible avatars
     for ef in iter_frames(video_path, roi, target_fps):
+        ts = ef.timestamp
         frame = ef.frame
         if frame.size == 0:
             continue
 
-        icon_location: Optional[tuple[int, int]] = None
+        total_frames += 1  # count every processed frame
 
-        if mic_template is not None:
-            match = multi_scale_match(frame, mic_template, threshold=MATCH_THRESHOLD)
-            if match:
-                icon_location = match.top_left
-        else:
-            if not _brightness_has_activity(frame):
-                continue
-            icon_location = (0, 0)
-
-        if icon_location is None:
+        # Crop fixed portrait area from top-left of ROI
+        portrait = frame[0:PORTRAIT_H, 0:PORTRAIT_W]
+        if portrait.size == 0:
             continue
 
         if agent_templates:
-            portrait = _extract_portrait(frame, icon_location)
-            agent_name, confidence = identify_agent(
-                portrait, agent_templates, phash_threshold
-            )
+            agent_name, confidence = identify_agent(portrait, agent_templates, phash_threshold)
         else:
             agent_name = "unknown"
-            confidence = 0.5
+            confidence = 0.0
 
-        if agent_name:
+        if agent_name != "unknown":
             detections.append(
-                CVDetection(
-                    frame_index=ef.index,
-                    timestamp=ef.timestamp,
-                    agent=agent_name,
-                    confidence=confidence,
-                )
-            )
-            logger.debug(
-                "M4 – t=%.2fs agent=%s conf=%.2f", ef.timestamp, agent_name, confidence
+                CVDetection(timestamp=ts, agent_name=agent_name, confidence=confidence)
             )
 
-    logger.info("M4 – detected %d speaking events", len(detections))
-    return detections
+    logger.info("M4 – detected %d speaking events across %d frames", len(detections), total_frames)
+    return detections, total_frames

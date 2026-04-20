@@ -52,12 +52,12 @@ def _build_intervals(
     current: Optional[SpeakingInterval] = None
     for det in sorted_det:
         if current is None:
-            current = SpeakingInterval(agent=det.agent, start=det.timestamp, end=det.timestamp)
-        elif det.agent == current.agent and (det.timestamp - current.end) <= merge_gap:
+            current = SpeakingInterval(agent=det.agent_name, start=det.timestamp, end=det.timestamp)
+        elif det.agent_name == current.agent and (det.timestamp - current.end) <= merge_gap:
             current.end = det.timestamp
         else:
             intervals.append(current)
-            current = SpeakingInterval(agent=det.agent, start=det.timestamp, end=det.timestamp)
+            current = SpeakingInterval(agent=det.agent_name, start=det.timestamp, end=det.timestamp)
 
     if current is not None:
         intervals.append(current)
@@ -86,21 +86,54 @@ def _build_speaker_map(
     segments: List[ASRSegment],
     intervals: List[SpeakingInterval],
 ) -> Dict[str, str]:
-    """Map each generic speaker label to an agent name by majority vote."""
-    votes: Dict[str, Dict[str, float]] = defaultdict(lambda: defaultdict(float))
+    """Map generic speaker labels to agent names based on temporal coverage.
+
+    Coverage is calculated as (total overlap with agent) / (total speaker duration).
+    """
+    speaker_durations: Dict[str, float] = defaultdict(float)
+    agent_overlaps: Dict[str, Dict[str, float]] = defaultdict(lambda: defaultdict(float))
 
     for seg in segments:
+        duration = seg.end - seg.start
+        if duration <= 0:
+            continue
+        speaker_durations[seg.speaker] += duration
         scores = _score_agents_for_segment(seg, intervals)
-        if scores:
-            best_agent = max(scores, key=lambda k: scores[k])
-            votes[seg.speaker][best_agent] += scores[best_agent]
+        for agent, overlap in scores.items():
+            agent_overlaps[seg.speaker][agent] += overlap
 
     speaker_map: Dict[str, str] = {}
-    for speaker, agent_scores in votes.items():
-        if agent_scores:
-            speaker_map[speaker] = max(agent_scores, key=lambda k: agent_scores[k])
+    for speaker, total_duration in speaker_durations.items():
+        if speaker not in agent_overlaps:
+            continue
 
-    logger.info("M5 – speaker mapping: %s", speaker_map)
+        # Calculate coverage for each agent
+        coverages = {
+            agent: (overlap / total_duration)
+            for agent, overlap in agent_overlaps[speaker].items()
+        }
+
+        # Select agent with highest coverage
+        best_agent = max(coverages, key=lambda a: coverages[a])
+        best_coverage = coverages[best_agent]
+
+        logger.info(
+            "M5 – Speaker %s best match: %s (coverage: %.2f%%)",
+            speaker,
+            best_agent,
+            best_coverage * 100,
+        )
+
+        # Require a minimum coverage to perform mapping (e.g., 20%)
+        if best_coverage >= 0.20:
+            speaker_map[speaker] = best_agent
+        else:
+            logger.warning(
+                "M5 – Low coverage for speaker %s (%.2f%%); mapping rejected",
+                speaker,
+                best_coverage * 100,
+            )
+
     return speaker_map
 
 

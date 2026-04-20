@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     whisper_model: str = "large-v2"
     device: Literal["cuda", "cpu"] = "cpu"
     compute_type: Literal["float16", "int8_float16", "int8", "float32"] = "int8"
+    mock_mode: bool = False
 
     frame_rate: int = 5
     output_dir: Path = Path("output")

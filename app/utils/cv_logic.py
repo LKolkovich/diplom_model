@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Dict, List, NamedTuple, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import cv2
 import imagehash
@@ -35,49 +35,6 @@ def compute_phash(image: np.ndarray, hash_size: int = 8) -> imagehash.ImageHash:
 def phash_distance(a: imagehash.ImageHash, b: imagehash.ImageHash) -> int:
     """Hamming distance between two pHashes."""
     return int(a - b)
-
-
-# ---------------------------------------------------------------------------
-# Template matching
-# ---------------------------------------------------------------------------
-
-class TemplateMatch(NamedTuple):
-    score: float
-    top_left: Tuple[int, int]
-    bottom_right: Tuple[int, int]
-
-
-def match_template(
-    scene: np.ndarray,
-    template: np.ndarray,
-    method: int = cv2.TM_CCOEFF_NORMED,
-    threshold: float = 0.7,
-) -> Optional[TemplateMatch]:
-    """Find *template* inside *scene*.
-
-    Returns
-    -------
-    TemplateMatch or None
-        ``None`` when the best match score is below *threshold*.
-    """
-    if template.shape[0] > scene.shape[0] or template.shape[1] > scene.shape[1]:
-        return None
-
-    scene_gray = cv2.cvtColor(scene, cv2.COLOR_BGR2GRAY) if scene.ndim == 3 else scene
-    tmpl_gray = cv2.cvtColor(template, cv2.COLOR_BGR2GRAY) if template.ndim == 3 else template
-
-    result = cv2.matchTemplate(scene_gray, tmpl_gray, method)
-    _, max_val, _, max_loc = cv2.minMaxLoc(result)
-
-    if max_val < threshold:
-        return None
-
-    h, w = tmpl_gray.shape[:2]
-    return TemplateMatch(
-        score=float(max_val),
-        top_left=max_loc,
-        bottom_right=(max_loc[0] + w, max_loc[1] + h),
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -166,29 +123,3 @@ def identify_agent(
 
     confidence = max(0.0, 1.0 - best_dist / 64.0)
     return best_name, confidence
-
-
-# ---------------------------------------------------------------------------
-# Multi-scale template search (used when the UI resolution is unknown)
-# ---------------------------------------------------------------------------
-
-def multi_scale_match(
-    scene: np.ndarray,
-    template: np.ndarray,
-    scales: List[float] | None = None,
-    threshold: float = 0.65,
-) -> Optional[TemplateMatch]:
-    """Try template matching at multiple scales and return the best hit."""
-    if scales is None:
-        scales = [0.5, 0.75, 1.0, 1.25, 1.5]
-
-    best: Optional[TemplateMatch] = None
-    for scale in scales:
-        h = max(1, int(template.shape[0] * scale))
-        w = max(1, int(template.shape[1] * scale))
-        resized = cv2.resize(template, (w, h), interpolation=cv2.INTER_AREA)
-        match = match_template(scene, resized, threshold=threshold)
-        if match and (best is None or match.score > best.score):
-            best = match
-
-    return best

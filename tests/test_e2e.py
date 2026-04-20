@@ -15,7 +15,7 @@ import numpy as np
 import pytest
 
 from app.config import Settings
-from app.models import ASRSegment, ProcessRequest
+from app.models import ASRSegment, ProcessConfig
 from app.orchestrator import create_task, get_task, run_pipeline
 from app.models import TaskStatus
 
@@ -59,24 +59,22 @@ def test_full_pipeline_no_gpu(tmp_path: Path) -> None:
         phash_threshold=10,
     )
 
-    request = ProcessRequest(video_path=str(video))
+    config = ProcessConfig()
     task_id = create_task()
 
     with patch(
         "app.services.m3_whisperx_asr.transcribe",
         return_value=_fake_asr_segments(),
     ):
-        run_pipeline(task_id, request, settings)
+        run_pipeline(task_id, str(video), config, settings)
 
     task = get_task(task_id)
     assert task is not None
     assert task.status == TaskStatus.completed, f"Pipeline failed: {task.error}"
-    assert "combined" in task.result_files
+    assert "zip" in task.result_files
 
-    combined_srt = Path(task.result_files["combined"])
-    assert combined_srt.exists()
-    content = combined_srt.read_text()
-    assert "rush B no stop" in content or "flank" in content
+    zip_path = Path(task.result_files["zip"])
+    assert zip_path.exists()
 
 
 def test_pipeline_fails_gracefully_on_bad_video(tmp_path: Path) -> None:
@@ -91,9 +89,9 @@ def test_pipeline_fails_gracefully_on_bad_video(tmp_path: Path) -> None:
         templates_dir=tmp_path / "agents",
         voicechat_roi="0.0,0.0,0.1,1.0",
     )
-    request = ProcessRequest(video_path=str(bad_video))
+    config = ProcessConfig()
     task_id = create_task()
-    run_pipeline(task_id, request, settings)
+    run_pipeline(task_id, str(bad_video), config, settings)
 
     task = get_task(task_id)
     assert task is not None

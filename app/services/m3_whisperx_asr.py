@@ -37,6 +37,7 @@ def transcribe(
     min_speakers: Optional[int] = None,
     max_speakers: Optional[int] = None,
     batch_size: int = 16,
+    initial_prompt: Optional[str] = None,
 ) -> list[ASRSegment]:
     """Transcribe, align, and diarise *audio_path*.
 
@@ -58,6 +59,8 @@ def transcribe(
         Hint for the diarization model.
     batch_size:
         Whisper inference batch size.
+    initial_prompt:
+        Optional text to guide the model's style and vocabulary.
 
     Returns
     -------
@@ -79,7 +82,7 @@ def transcribe(
     audio = wx.load_audio(str(audio_path))
 
     logger.info("M3 – transcribing …")
-    raw = model.transcribe(audio, batch_size=batch_size)
+    raw = model.transcribe(audio, batch_size=batch_size, initial_prompt=initial_prompt)
     detected_lang: str = raw.get("language", language or "en")
     logger.info("M3 – detected language: %s", detected_lang)
 

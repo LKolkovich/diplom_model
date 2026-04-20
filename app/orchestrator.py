@@ -24,11 +24,12 @@ import logging
 import shutil
 import traceback
 import uuid
+import zipfile
 from pathlib import Path
 from typing import Dict, Optional
 
 from app.config import Settings
-from app.models import ModuleTag, ProcessRequest, TaskState, TaskStatus
+from app.models import ModuleTag, ProcessConfig, TaskState, TaskStatus
 from app.services import (
     m1_audio_validator,
     m2_frame_extractor,
@@ -42,13 +43,13 @@ logger = logging.getLogger(__name__)
 
 _TASK_STORE: Dict[str, TaskState] = {}
 
-PROGRESS_MAP = {
-    ModuleTag.m1_validate: 10,
-    ModuleTag.m2_frames: 25,
-    ModuleTag.m3_asr: 55,
-    ModuleTag.m4_cv: 70,
-    ModuleTag.m5_fusion: 85,
-    ModuleTag.m6_export: 100,
+STAGES = {
+    "VALIDATING": {"progress": 10, "message": "Validating audio/video inputs"},
+    "EXTRACTING_FRAMES": {"progress": 25, "message": "Extracting frames for CV analysis"},
+    "TRANSCRIBING": {"progress": 55, "message": "Transcribing audio with WhisperX"},
+    "DETECTING_MIC": {"progress": 70, "message": "Detecting mic activity via CV"},
+    "FUSING": {"progress": 85, "message": "Fusing ASR and CV results"},
+    "EXPORTING": {"progress": 95, "message": "Exporting results to SRT/ZIP"},
 }
 
 
@@ -62,13 +63,28 @@ def get_task(task_id: str) -> Optional[TaskState]:
     return _TASK_STORE.get(task_id)
 
 
-def _update(task: TaskState, module: ModuleTag) -> None:
-    task.current_module = module
-    task.progress = PROGRESS_MAP[module]
+def _update(
+    task: TaskState,
+    stage: str,
+    module: Optional[ModuleTag] = None,
+    message: Optional[str] = None,
+) -> None:
+    task.stage = stage
+    if stage in STAGES:
+        task.progress = STAGES[stage]["progress"]
+        task.message = message or STAGES[stage]["message"]
+    if module:
+        task.current_module = module
     task.status = TaskStatus.running
 
 
-def run_pipeline(task_id: str, request: ProcessRequest, settings: Settings) -> None:
+def run_pipeline(
+    task_id: str,
+    video_path: str,
+    config: ProcessConfig,
+    settings: Settings,
+    portraits_override: Optional[str] = None,
+) -> None:
     """Execute the full M1-M6 pipeline in a background thread.
 
     This function is designed to be called from ``FastAPI.BackgroundTasks`` and
@@ -84,51 +100,61 @@ def run_pipeline(task_id: str, request: ProcessRequest, settings: Settings) -> N
     tmp_dir.mkdir(parents=True, exist_ok=True)
 
     try:
-        _update(task, ModuleTag.m1_validate)
+        _update(task, "VALIDATING", ModuleTag.m1_validate)
         logger.info("[%s] M1 – AudioValidator", task_id)
-        audio_source = request.audio_path or request.video_path
-        wav_path = m1_audio_validator.validate_and_convert(audio_source, tmp_dir)
+        wav_path = m1_audio_validator.validate_and_convert(video_path, tmp_dir)
 
-        _update(task, ModuleTag.m2_frames)
+        _update(task, "EXTRACTING_FRAMES", ModuleTag.m2_frames)
         logger.info("[%s] M2 – FrameExtractor", task_id)
         roi = settings.roi_as_tuple()
 
-        _update(task, ModuleTag.m3_asr)
+        _update(task, "TRANSCRIBING", ModuleTag.m3_asr)
         logger.info("[%s] M3 – WhisperXASR", task_id)
         asr_segments = m3_whisperx_asr.transcribe(
             audio_path=wav_path,
             model_name=settings.whisper_model,
             device=settings.device,
             compute_type=settings.compute_type,
-            language=request.language,
+            language=config.language,
             hf_token=settings.hf_token,
-            min_speakers=request.min_speakers,
-            max_speakers=request.max_speakers,
+            min_speakers=config.min_speakers,
+            max_speakers=config.max_speakers,
+            initial_prompt=config.initial_prompt,
         )
 
-        _update(task, ModuleTag.m4_cv)
+        _update(task, "DETECTING_MIC", ModuleTag.m4_cv)
         logger.info("[%s] M4 – CVMicDetector", task_id)
         cv_detections = m4_cv_mic_detector.detect_speakers(
-            video_path=request.video_path,
+            video_path=video_path,
             roi=roi,
             target_fps=settings.frame_rate,
-            templates_dir=settings.templates_dir,
+            templates_dir=portraits_override or settings.templates_dir,
             phash_threshold=settings.phash_threshold,
         )
 
-        _update(task, ModuleTag.m5_fusion)
+        _update(task, "FUSING", ModuleTag.m5_fusion)
         logger.info("[%s] M5 – FusionEngine", task_id)
         fused = m5_fusion_engine.fuse(asr_segments, cv_detections)
 
-        _update(task, ModuleTag.m6_export)
+        _update(task, "EXPORTING", ModuleTag.m6_export)
         logger.info("[%s] M6 – SRTExporter", task_id)
         output_dir = settings.output_dir / task_id
         result_files = m6_srt_exporter.export(fused, output_dir, task_id)
 
-        task.result_files = result_files
+        # Package results into a ZIP
+        zip_path = output_dir / "results.zip"
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zipf:
+            for file_path_str in result_files.values():
+                file_path = Path(file_path_str)
+                zipf.write(file_path, file_path.name)
+
+        task.result_files = {"zip": str(zip_path)}
         task.status = TaskStatus.completed
+        task.stage = "COMPLETED"
+        task.progress = 100
+        task.message = "Processing completed successfully"
         task.current_module = ModuleTag.done
-        logger.info("[%s] pipeline completed. files: %s", task_id, list(result_files.keys()))
+        logger.info("[%s] pipeline completed. ZIP: %s", task_id, zip_path)
 
     except Exception:
         task.status = TaskStatus.failed

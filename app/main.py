@@ -2,18 +2,16 @@
 
 Endpoints
 ---------
-POST /process
-    Accepts a ProcessRequest JSON body and enqueues the M0-M6 pipeline as a
-    background task.  Returns a task_id immediately.
+POST /tasks
+    Accepts a video file and an optional JSON config via multipart/form-data.
+    Enqueues the M1-M6 pipeline as a background task. Returns a task_id.
 
-GET /status/{task_id}
-    Returns current progress percentage, module name, and status.
+GET /tasks/{task_id}
+    Returns current status, progress, stage, and message.
 
-GET /result/{task_id}
-    When the task has completed, returns download links to the SRT files.
-
-GET /download/{task_id}/{filename}
-    Serves a generated SRT file.
+GET /tasks/{task_id}/result
+    When the task has completed, returns a ZIP file containing the SRT files
+    and metadata.json.
 
 GET /health
     Liveness probe.
@@ -21,17 +19,18 @@ GET /health
 
 from __future__ import annotations
 
+import json
 import logging
+import shutil
 from pathlib import Path
 
-from fastapi import BackgroundTasks, FastAPI, HTTPException
+from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 
 from app.config import get_settings
 from app.models import (
-    ProcessRequest,
+    ProcessConfig,
     ProcessResponse,
-    ResultResponse,
     StatusResponse,
     TaskStatus,
 )
@@ -55,26 +54,46 @@ app = FastAPI(
 
 @app.get("/health", tags=["meta"])
 def health() -> dict:
-    return {"status": "ok"}
+    return {
+        "status": "healthy",
+        "version": "1.0.0",
+        "service": "subtitle-generator",
+    }
 
 
-@app.post("/process", response_model=ProcessResponse, status_code=202, tags=["pipeline"])
-def start_processing(
-    request: ProcessRequest,
+@app.post("/tasks", response_model=ProcessResponse, status_code=202, tags=["pipeline"])
+async def create_task_endpoint(
     background_tasks: BackgroundTasks,
+    video: UploadFile = File(...),
+    config: str = Form("{}"),
 ) -> ProcessResponse:
     settings = get_settings()
     task_id = create_task()
-    background_tasks.add_task(run_pipeline, task_id, request, settings)
-    logger.info("Queued task %s for video: %s", task_id, request.video_path)
+
+    # Save uploaded file
+    task_dir = settings.output_dir / task_id
+    task_dir.mkdir(parents=True, exist_ok=True)
+    video_path = task_dir / video.filename
+    with video_path.open("wb") as buffer:
+        shutil.copyfileobj(video.file, buffer)
+
+    try:
+        config_dict = json.loads(config)
+        process_config = ProcessConfig(**config_dict)
+    except Exception as e:
+        logger.error("Invalid config JSON: %s", e)
+        raise HTTPException(status_code=400, detail=f"Invalid config JSON: {e}")
+
+    background_tasks.add_task(run_pipeline, task_id, str(video_path), process_config, settings)
+    logger.info("Queued task %s for video: %s", task_id, video.filename)
     return ProcessResponse(
         task_id=task_id,
-        message="Processing started. Poll /status/{task_id} for progress.",
+        message="Task created. Poll /tasks/{task_id} for progress.",
     )
 
 
-@app.get("/status/{task_id}", response_model=StatusResponse, tags=["pipeline"])
-def get_status(task_id: str) -> StatusResponse:
+@app.get("/tasks/{task_id}", response_model=StatusResponse, tags=["pipeline"])
+def get_task_status(task_id: str) -> StatusResponse:
     task = get_task(task_id)
     if task is None:
         raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found")
@@ -82,39 +101,30 @@ def get_status(task_id: str) -> StatusResponse:
         task_id=task.task_id,
         status=task.status,
         progress=task.progress,
+        stage=task.stage,
+        message=task.message,
         current_module=task.current_module,
         error=task.error,
     )
 
 
-@app.get("/result/{task_id}", response_model=ResultResponse, tags=["pipeline"])
-def get_result(task_id: str) -> ResultResponse:
+@app.get("/tasks/{task_id}/result", tags=["pipeline"])
+def get_task_result(task_id: str) -> FileResponse:
     task = get_task(task_id)
     if task is None:
         raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found")
-    if task.status == TaskStatus.running or task.status == TaskStatus.pending:
+    if task.status != TaskStatus.completed:
         raise HTTPException(
-            status_code=202,
-            detail=f"Task is still {task.status.value}. Progress: {task.progress}%",
+            status_code=400,
+            detail=f"Task is {task.status.value}. Result only available when completed.",
         )
-    if task.status == TaskStatus.failed:
-        raise HTTPException(status_code=500, detail=task.error or "Pipeline failed")
 
-    download_links = {
-        label: f"/download/{task_id}/{Path(path).name}"
-        for label, path in task.result_files.items()
-    }
-    return ResultResponse(task_id=task_id, status=task.status, files=download_links)
+    zip_path = task.result_files.get("zip")
+    if not zip_path or not Path(zip_path).exists():
+        raise HTTPException(status_code=404, detail="Result ZIP not found")
 
-
-@app.get("/download/{task_id}/{filename}", tags=["pipeline"])
-def download_file(task_id: str, filename: str) -> FileResponse:
-    settings = get_settings()
-    file_path = settings.output_dir / task_id / filename
-    if not file_path.exists():
-        raise HTTPException(status_code=404, detail="File not found")
     return FileResponse(
-        path=str(file_path),
-        media_type="text/plain",
-        filename=filename,
+        path=zip_path,
+        media_type="application/zip",
+        filename=f"{task_id}_results.zip",
     )

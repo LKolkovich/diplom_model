@@ -48,18 +48,6 @@ PORTRAIT_W = 36
 PORTRAIT_H = 36
 
 
-def _brightness_has_activity(roi_frame: np.ndarray, threshold: int = 200) -> bool:
-    """Fallback heuristic: check for very bright pixels in the ROI.
-
-    The Valorant speaking indicator lights up brightly.  When no mic template
-    is available we use this as a coarse activity detector.
-    """
-    gray = cv2.cvtColor(roi_frame, cv2.COLOR_BGR2GRAY)
-    _, bright = cv2.threshold(gray, threshold, 255, cv2.THRESH_BINARY)
-    ratio = np.count_nonzero(bright) / bright.size
-    return bool(ratio > 0.02)
-
-
 def detect_speakers(
     video_path: str | Path,
     roi: tuple[float, float, float, float],
@@ -92,33 +80,25 @@ def detect_speakers(
     detections: List[CVDetection] = []
 
     for ef in iter_frames(video_path, roi, target_fps):
+        ts = ef.timestamp
         frame = ef.frame
         if frame.size == 0:
             continue
 
-        if not _brightness_has_activity(frame):
+        # Crop fixed portrait area from top-left of ROI
+        portrait = frame[0:PORTRAIT_H, 0:PORTRAIT_W]
+        if portrait.size == 0:
             continue
 
         if agent_templates:
-            # ROI is assumed to be the portrait itself if no mic template is used
-            agent_name, confidence = identify_agent(
-                frame, agent_templates, phash_threshold
-            )
+            agent_name, confidence = identify_agent(portrait, agent_templates, phash_threshold)
         else:
             agent_name = "unknown"
-            confidence = 0.5
+            confidence = 0.0
 
-        if agent_name:
+        if agent_name != "unknown":
             detections.append(
-                CVDetection(
-                    frame_index=ef.index,
-                    timestamp=ef.timestamp,
-                    agent=agent_name,
-                    confidence=confidence,
-                )
-            )
-            logger.debug(
-                "M4 – t=%.2fs agent=%s conf=%.2f", ef.timestamp, agent_name, confidence
+                CVDetection(timestamp=ts, agent_name=agent_name, confidence=confidence)
             )
 
     logger.info("M4 – detected %d speaking events", len(detections))

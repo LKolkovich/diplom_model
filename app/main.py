@@ -23,8 +23,9 @@ import json
 import logging
 import shutil
 from pathlib import Path
+from typing import List, Optional
 
-from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile, BackgroundTask
 from fastapi.responses import FileResponse
 
 from app.config import get_settings
@@ -34,7 +35,7 @@ from app.models import (
     StatusResponse,
     TaskStatus,
 )
-from app.orchestrator import create_task, get_task, run_pipeline
+from app.orchestrator import create_task, delete_task, get_task, run_pipeline
 
 logging.basicConfig(
     level=logging.INFO,
@@ -54,10 +55,13 @@ app = FastAPI(
 
 @app.get("/health", tags=["meta"])
 def health() -> dict:
+    settings = get_settings()
     return {
-        "status": "healthy",
+        "status": "ok",
+        "mock_mode": settings.mock_mode,
         "version": "1.0.0",
-        "service": "subtitle-generator",
+        "whisper_model": settings.whisper_model,
+        "device": settings.device,
     }
 
 
@@ -66,6 +70,7 @@ async def create_task_endpoint(
     background_tasks: BackgroundTasks,
     video: UploadFile = File(...),
     config: str = Form("{}"),
+    portraits: List[UploadFile] = File(default=[]),
 ) -> ProcessResponse:
     settings = get_settings()
     task_id = create_task()
@@ -77,6 +82,16 @@ async def create_task_endpoint(
     with video_path.open("wb") as buffer:
         shutil.copyfileobj(video.file, buffer)
 
+    portraits_dir: Optional[Path] = None
+    if portraits:
+        portraits_dir = task_dir / "portraits"
+        portraits_dir.mkdir(parents=True, exist_ok=True)
+        for portrait_file in portraits:
+            dest = portraits_dir / portrait_file.filename
+            with dest.open("wb") as buf:
+                shutil.copyfileobj(portrait_file.file, buf)
+        logger.info("Saved %d portrait(s) to %s", len(portraits), portraits_dir)
+
     try:
         config_dict = json.loads(config)
         process_config = ProcessConfig(**config_dict)
@@ -84,7 +99,14 @@ async def create_task_endpoint(
         logger.error("Invalid config JSON: %s", e)
         raise HTTPException(status_code=400, detail=f"Invalid config JSON: {e}")
 
-    background_tasks.add_task(run_pipeline, task_id, str(video_path), process_config, settings)
+    background_tasks.add_task(
+        run_pipeline,
+        task_id,
+        str(video_path),
+        process_config,
+        settings,
+        str(portraits_dir) if portraits_dir else None,
+    )
     logger.info("Queued task %s for video: %s", task_id, video.filename)
     return ProcessResponse(
         task_id=task_id,
@@ -123,8 +145,12 @@ def get_task_result(task_id: str) -> FileResponse:
     if not zip_path or not Path(zip_path).exists():
         raise HTTPException(status_code=404, detail="Result ZIP not found")
 
+    # Pop task before returning — result is single-use
+    delete_task(task_id)
+
     return FileResponse(
         path=zip_path,
         media_type="application/zip",
         filename=f"{task_id}_results.zip",
+        background=BackgroundTask(lambda: Path(zip_path).unlink(missing_ok=True)),
     )

@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from app.models import FusedSegment
 
@@ -44,6 +44,8 @@ def export(
     segments: List[FusedSegment],
     output_dir: str | Path,
     task_id: str,
+    audio_duration: float = 0.0,
+    cv_detections: Optional[List] = None,
 ) -> Dict[str, str]:
     """Write SRT files and metadata.json, return a mapping of label → file path.
 
@@ -55,6 +57,10 @@ def export(
         Directory to write the SRT files into.
     task_id:
         Used for metadata.
+    audio_duration:
+        Duration of the source audio in seconds.
+    cv_detections:
+        Raw detections from M4 used for coverage metrics.
 
     Returns
     -------
@@ -85,10 +91,16 @@ def export(
         logger.info("M6 – wrote speaker SRT: %s (%d segments)", spk_path, len(spk_segs))
 
     # Metadata.json
+    total_frames = len(cv_detections) if cv_detections else 0
+    detected_frames = sum(1 for d in (cv_detections or []) if d.agent_name != "unknown")
+    cv_coverage = round(detected_frames / total_frames, 4) if total_frames > 0 else 0.0
+
     metadata: Dict[str, Any] = {
         "task_id": task_id,
         "segment_count": len(segments),
         "speakers": list(by_speaker.keys()),
+        "audio_duration": round(audio_duration, 3),
+        "cv_coverage": cv_coverage,
     }
     meta_path = out / "metadata.json"
     with meta_path.open("w", encoding="utf-8") as f:

@@ -91,7 +91,6 @@ class ASRSegment(BaseModel):
 
 
 class CVDetection(BaseModel):
-    frame_index: int
     timestamp: float
-    agent: str
+    agent_name: str
     confidence: float

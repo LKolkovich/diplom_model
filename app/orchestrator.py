@@ -28,6 +28,8 @@ import zipfile
 from pathlib import Path
 from typing import Dict, Optional
 
+import soundfile as sf
+
 from app.config import Settings
 from app.models import ModuleTag, ProcessConfig, TaskState, TaskStatus
 from app.services import (
@@ -61,6 +63,10 @@ def create_task() -> str:
 
 def get_task(task_id: str) -> Optional[TaskState]:
     return _TASK_STORE.get(task_id)
+
+
+def delete_task(task_id: str) -> None:
+    _TASK_STORE.pop(task_id, None)
 
 
 def _update(
@@ -139,7 +145,17 @@ def run_pipeline(
         _update(task, "EXPORTING", ModuleTag.m6_export)
         logger.info("[%s] M6 – SRTExporter", task_id)
         output_dir = settings.output_dir / task_id
-        result_files = m6_srt_exporter.export(fused, output_dir, task_id)
+
+        audio_info = sf.info(str(wav_path))
+        audio_duration = audio_info.duration
+
+        result_files = m6_srt_exporter.export(
+            fused,
+            output_dir,
+            task_id,
+            audio_duration=audio_duration,
+            cv_detections=cv_detections,
+        )
 
         # Package results into a ZIP
         zip_path = output_dir / "results.zip"

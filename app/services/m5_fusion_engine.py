@@ -52,12 +52,12 @@ def _build_intervals(
     current: Optional[SpeakingInterval] = None
     for det in sorted_det:
         if current is None:
-            current = SpeakingInterval(agent=det.agent, start=det.timestamp, end=det.timestamp)
-        elif det.agent == current.agent and (det.timestamp - current.end) <= merge_gap:
+            current = SpeakingInterval(agent=det.agent_name, start=det.timestamp, end=det.timestamp)
+        elif det.agent_name == current.agent and (det.timestamp - current.end) <= merge_gap:
             current.end = det.timestamp
         else:
             intervals.append(current)
-            current = SpeakingInterval(agent=det.agent, start=det.timestamp, end=det.timestamp)
+            current = SpeakingInterval(agent=det.agent_name, start=det.timestamp, end=det.timestamp)
 
     if current is not None:
         intervals.append(current)

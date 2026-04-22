@@ -56,3 +56,17 @@ def test_iter_frames_debug_saves_png(sample_video: Path, tmp_path: Path) -> None
     for p in pngs:
         assert p.exists()
         assert p.suffix == ".png"
+
+
+def test_iter_frames_debug_off_does_not_save(sample_video: Path, tmp_path: Path) -> None:
+    debug_dir = tmp_path / "debug_off"
+    list(
+        iter_frames(
+            sample_video,
+            ROI_LEFT,
+            target_fps=2,
+            debug_frames=False,
+            debug_frames_dir=debug_dir,
+        )
+    )
+    assert not debug_dir.exists() or not any(debug_dir.glob("*.png"))

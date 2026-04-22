@@ -91,6 +91,8 @@ def iter_frames(
         debug_dir = Path(debug_frames_dir)
         debug_dir.mkdir(parents=True, exist_ok=True)
         logger.info("M2 – debug frames enabled, saving to %s", debug_dir)
+    else:
+        debug_dir = None
 
     frame_idx = 0
     sampled_idx = 0
@@ -105,9 +107,10 @@ def iter_frames(
                 timestamp = frame_idx / native_fps
                 roi_frame = _crop_roi(bgr, roi)
 
-                if debug_frames:
+                if debug_frames and debug_dir:
                     # Save as PNG
-                    dest = Path(debug_frames_dir) / f"frame_{sampled_idx:06d}_{timestamp:.3f}s.png"
+                    ts_ms = int(timestamp * 1000)
+                    dest = debug_dir / f"frame_{sampled_idx:06d}_{ts_ms:08d}.png"
                     cv2.imwrite(str(dest), roi_frame)
 
                 yield ExtractedFrame(index=sampled_idx, timestamp=timestamp, frame=roi_frame)

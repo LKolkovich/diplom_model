@@ -54,6 +54,8 @@ def detect_speakers(
     target_fps: int,
     templates_dir: str | Path,
     phash_threshold: int = 10,
+    debug_frames: bool = False,
+    debug_frames_dir: Path | str = "debug_frames",
 ) -> tuple[List[CVDetection], int]:
     """Run the full CV mic-detection pass over the video.
 
@@ -69,6 +71,10 @@ def detect_speakers(
         Directory containing agent portrait PNG/JPEG files.
     phash_threshold:
         Maximum pHash Hamming distance to count as a match.
+    debug_frames:
+        If True, M2 will save extracted frames to disk.
+    debug_frames_dir:
+        Directory where M2 saves debug frames.
 
     Returns
     -------
@@ -99,7 +105,9 @@ def detect_speakers(
     # Incorrect ROI examples:
     #   - Full screen webcam feed
     #   - Static player list with always-visible avatars
-    for ef in iter_frames(video_path, roi, target_fps):
+    for ef in iter_frames(
+        video_path, roi, target_fps, debug_frames=debug_frames, debug_frames_dir=debug_frames_dir
+    ):
         ts = ef.timestamp
         frame = ef.frame
         if frame.size == 0:

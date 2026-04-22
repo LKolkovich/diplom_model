@@ -136,6 +136,8 @@ def run_pipeline(
             target_fps=settings.frame_rate,
             templates_dir=portraits_override or settings.templates_dir,
             phash_threshold=settings.phash_threshold,
+            debug_frames=settings.debug_frames,
+            debug_frames_dir=settings.debug_frames_dir,
         )
 
         _update(task, "FUSING", ModuleTag.m5_fusion)

@@ -50,6 +50,8 @@ def iter_frames(
     video_path: str | Path,
     roi: Tuple[float, float, float, float],
     target_fps: int = 5,
+    debug_frames: bool = False,
+    debug_frames_dir: Path | str = "debug_frames",
 ) -> Iterator[ExtractedFrame]:
     """Yield ROI-cropped frames at *target_fps* frames per second.
 
@@ -61,6 +63,10 @@ def iter_frames(
         Fractional (x1, y1, x2, y2) region of interest.
     target_fps:
         How many frames per second to sample.
+    debug_frames:
+        If True, save extracted frames as PNG files to *debug_frames_dir*.
+    debug_frames_dir:
+        Directory to save debug PNG files.
 
     Yields
     ------
@@ -81,6 +87,13 @@ def iter_frames(
         target_fps,
     )
 
+    if debug_frames:
+        debug_dir = Path(debug_frames_dir)
+        debug_dir.mkdir(parents=True, exist_ok=True)
+        logger.info("M2 – debug frames enabled, saving to %s", debug_dir)
+    else:
+        debug_dir = None
+
     frame_idx = 0
     sampled_idx = 0
 
@@ -93,6 +106,13 @@ def iter_frames(
             if frame_idx % frame_interval == 0:
                 timestamp = frame_idx / native_fps
                 roi_frame = _crop_roi(bgr, roi)
+
+                if debug_frames and debug_dir:
+                    # Save as PNG
+                    ts_ms = int(timestamp * 1000)
+                    dest = debug_dir / f"frame_{sampled_idx:06d}_{ts_ms:08d}.png"
+                    cv2.imwrite(str(dest), roi_frame)
+
                 yield ExtractedFrame(index=sampled_idx, timestamp=timestamp, frame=roi_frame)
                 sampled_idx += 1
 

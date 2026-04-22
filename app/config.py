@@ -19,10 +19,13 @@ class Settings(BaseSettings):
     output_dir: Path = Path("output")
     templates_dir: Path = Path("templates/agents")
 
+    debug_frames: bool = False
+    debug_frames_dir: Path = Path("debug_frames")
+
     voicechat_roi: str = "0.0,0.15,0.075,0.65"
     phash_threshold: int = 10
 
-    @field_validator("output_dir", "templates_dir", mode="before")
+    @field_validator("output_dir", "templates_dir", "debug_frames_dir", mode="before")
     @classmethod
     def _ensure_path(cls, v: object) -> Path:
         p = Path(str(v))

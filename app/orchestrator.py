@@ -113,7 +113,7 @@ def run_pipeline(
         _update(task, "EXTRACTING_FRAMES", ModuleTag.m2_frames)
         logger.info("[%s] M2 – FrameExtractor", task_id)
         video_mode = config.video_mode or settings.video_mode
-        if video_mode == "roi_crop":
+        if video_mode == "full_frame":
             roi = settings.roi_as_tuple()
         else:
             roi = None

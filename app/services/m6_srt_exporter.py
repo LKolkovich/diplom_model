@@ -94,7 +94,11 @@ def export(
         logger.info("M6 – wrote speaker SRT: %s (%d segments)", spk_path, len(spk_segs))
 
     # Metadata.json
-    # Compute cv_coverage as fraction of frames where at least one speaker was detected
+    # cv_coverage is the fraction of total processed M2 frames where M4 detected
+    # at least one agent speaking.
+    # unique_timestamps: count of frames with at least one CV detection.
+    # cv_total_frames: total number of frames sampled by M2 from the video.
+    # This metric provides the overall density of the CV-based signal.
     unique_timestamps = {d.timestamp for d in cv_detections} if cv_detections else set()
     detected_frames = len(unique_timestamps)
     cv_coverage = round(detected_frames / cv_total_frames, 4) if cv_total_frames > 0 else 0.0

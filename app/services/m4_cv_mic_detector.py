@@ -2,6 +2,19 @@
 
 Analyses ROI frames from M2 to detect which Valorant agent is speaking at
 each point in time.
+
+Format cv_detections.jsonl (one JSON per line):
+{
+  "timestamp_ms": 12345,           // absolute timestamp of the frame in milliseconds
+  "frame_index": 42,              // frame index within the M2 iteration
+  "detections": {                 // detections per agent in this frame
+    "jett": 0.91,
+    "sage": 0.78
+  }
+}
+
+- timestamp_ms: used for manual validation (sync with video).
+- detections: confidence score for each agent in this frame after mic ↔ portrait linking.
 """
 
 from __future__ import annotations
@@ -64,7 +77,7 @@ def detect_speakers(
         cv_debug_log = None
 
     for ef in iter_frames(
-        video_path, roi, target_fps, debug_frames=False # Don't let M2 save debug frames, M4 will do it with overlays
+        video_path, roi, target_fps, debug_raw_frames=False # Don't let M2 save raw debug frames, M4 will do it with overlays
     ):
         ts = ef.timestamp
         frame = ef.frame

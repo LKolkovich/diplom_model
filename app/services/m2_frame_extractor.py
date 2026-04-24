@@ -50,7 +50,7 @@ def iter_frames(
     video_path: str | Path,
     roi: Optional[Tuple[float, float, float, float]],
     target_fps: int = 5,
-    debug_frames: bool = False,
+    debug_raw_frames: bool = False,
     debug_frames_dir: Path | str = "debug_frames",
 ) -> Iterator[ExtractedFrame]:
     """Yield ROI-cropped frames at *target_fps* frames per second.
@@ -63,8 +63,10 @@ def iter_frames(
         Fractional (x1, y1, x2, y2) region of interest. If None, yield full frames.
     target_fps:
         How many frames per second to sample.
-    debug_frames:
-        If True, save extracted frames as PNG files to *debug_frames_dir*.
+    debug_raw_frames:
+        If True, save raw extracted frames as PNG files to *debug_frames_dir*.
+        When called from M4, this should typically be False as M4 handles its own
+        debug output (overlay frames).
     debug_frames_dir:
         Directory to save debug PNG files.
 
@@ -88,10 +90,10 @@ def iter_frames(
         roi,
     )
 
-    if debug_frames:
+    if debug_raw_frames:
         debug_dir = Path(debug_frames_dir)
         debug_dir.mkdir(parents=True, exist_ok=True)
-        logger.info("M2 – debug frames enabled, saving to %s", debug_dir)
+        logger.info("M2 – debug raw frames enabled, saving to %s", debug_dir)
     else:
         debug_dir = None
 
@@ -112,7 +114,7 @@ def iter_frames(
                 else:
                     roi_frame = bgr
 
-                if debug_frames and debug_dir:
+                if debug_raw_frames and debug_dir:
                     # Save as PNG
                     ts_ms = int(timestamp * 1000)
                     dest = debug_dir / f"frame_{sampled_idx:06d}_{ts_ms:08d}.png"
@@ -139,7 +141,7 @@ def extract_frames_to_disk(
     out.mkdir(parents=True, exist_ok=True)
 
     paths: list[Path] = []
-    for ef in iter_frames(video_path, roi, target_fps):
+    for ef in iter_frames(video_path, roi, target_fps, debug_raw_frames=False):
         dest = out / f"frame_{ef.index:06d}_{ef.timestamp:.3f}s.jpg"
         cv2.imwrite(str(dest), ef.frame, [cv2.IMWRITE_JPEG_QUALITY, 90])
         paths.append(dest)

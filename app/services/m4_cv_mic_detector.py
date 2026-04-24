@@ -22,16 +22,15 @@ from __future__ import annotations
 import logging
 import json
 from pathlib import Path
-from typing import List, Optional, Tuple, Dict, Set
+from typing import List, Optional, Dict
 
 import cv2
 import numpy as np
 
 from app.models import CVDetection
-from app.services.m2_frame_extractor import ExtractedFrame, iter_frames
+from app.services.m2_frame_extractor import iter_frames
 from app.utils.cv_logic import (
     AgentTemplate,
-    identify_agent,
     load_agent_templates,
     load_simple_templates,
     match_templates,

@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Literal
 
 from pydantic import BaseModel, Field
 
@@ -37,7 +37,7 @@ class ProcessConfig(BaseModel):
     max_speakers: Optional[int] = Field(default=None, ge=1, le=10)
     language: Optional[str] = Field(default=None)
     initial_prompt: Optional[str] = Field(default=None)
-    video_mode: Optional[str] = Field(default=None)  # "full_frame" vs "roi_crop"
+    video_mode: Optional[Literal["roi_crop", "full_frame"]] = Field(default=None)
 
 
 class ProcessResponse(BaseModel):

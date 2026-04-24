@@ -89,3 +89,12 @@ When `DEBUG_FRAMES=true` is set in `.env`:
 | `GET` | `/health` | Liveness probe |
 
 Interactive API docs: `http://localhost:8000/docs`.
+
+## Running Tests
+
+To run the test suite, ensure you have the dev dependencies installed:
+
+```bash
+pip install pytest soundfile
+pytest
+```

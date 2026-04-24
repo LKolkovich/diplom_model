@@ -12,7 +12,7 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from app.models import FusedSegment
+from app.models import FusedSegment, CVDetection
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +45,7 @@ def export(
     output_dir: str | Path,
     task_id: str,
     audio_duration: float = 0.0,
-    cv_detections: Optional[List] = None,
+    cv_detections: Optional[List[CVDetection]] = None,
     cv_total_frames: int = 0,
 ) -> Dict[str, str]:
     """Write SRT files and metadata.json, return a mapping of label → file path.
@@ -94,8 +94,13 @@ def export(
         logger.info("M6 – wrote speaker SRT: %s (%d segments)", spk_path, len(spk_segs))
 
     # Metadata.json
-    # Compute cv_coverage as fraction of frames where a speaker was detected
-    detected_frames = len(cv_detections) if cv_detections else 0
+    # cv_coverage is the fraction of total processed M2 frames where M4 detected
+    # at least one agent speaking.
+    # unique_timestamps: count of frames with at least one CV detection.
+    # cv_total_frames: total number of frames sampled by M2 from the video.
+    # This metric provides the overall density of the CV-based signal.
+    unique_timestamps = {d.timestamp for d in cv_detections} if cv_detections else set()
+    detected_frames = len(unique_timestamps)
     cv_coverage = round(detected_frames / cv_total_frames, 4) if cv_total_frames > 0 else 0.0
 
     metadata: Dict[str, Any] = {

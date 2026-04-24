@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Any
 
 import cv2
 import imagehash
@@ -20,6 +20,91 @@ from PIL import Image
 logger = logging.getLogger(__name__)
 
 SUPPORTED_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".webp"}
+
+
+# ---------------------------------------------------------------------------
+# Template Matching & NMS
+# ---------------------------------------------------------------------------
+
+def match_templates(
+    image: np.ndarray,
+    templates: List[np.ndarray],
+    threshold: float = 0.7,
+) -> List[Tuple[int, int, int, int, float, int]]:
+    """
+    Find all occurrences of templates in image.
+    Returns list of (x, y, w, h, score, template_index).
+    """
+    all_detections = []
+    if image is None or image.size == 0:
+        return []
+
+    if len(image.shape) == 3:
+        gray_image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    else:
+        gray_image = image
+
+    for t_idx, template in enumerate(templates):
+        if template is None or template.size == 0:
+            continue
+        
+        if len(template.shape) == 3:
+            gray_template = cv2.cvtColor(template, cv2.COLOR_BGR2GRAY)
+        else:
+            gray_template = template
+            
+        th, tw = gray_template.shape[:2]
+        if th > gray_image.shape[0] or tw > gray_image.shape[1]:
+            continue
+
+        res = cv2.matchTemplate(gray_image, gray_template, cv2.TM_CCOEFF_NORMED)
+        loc = np.where(res >= threshold)
+        
+        for pt in zip(*loc[::-1]): # x, y
+            score = res[pt[1], pt[0]]
+            all_detections.append((int(pt[0]), int(pt[1]), int(tw), int(th), float(score), t_idx))
+            
+    return all_detections
+
+def non_max_suppression(
+    boxes: List[Tuple[int, int, int, int, float, int]], 
+    iou_threshold: float = 0.3
+) -> List[Tuple[int, int, int, int, float, int]]:
+    """
+    Simple NMS to filter overlapping boxes.
+    """
+    if not boxes:
+        return []
+
+    # Sort by score descending
+    boxes = sorted(boxes, key=lambda x: x[4], reverse=True)
+    
+    keep = []
+    while boxes:
+        best = boxes.pop(0)
+        keep.append(best)
+        
+        remaining = []
+        for box in boxes:
+            if compute_iou(best, box) < iou_threshold:
+                remaining.append(box)
+        boxes = remaining
+        
+    return keep
+
+def compute_iou(boxA, boxB):
+    # box = (x, y, w, h, score)
+    xA = max(boxA[0], boxB[0])
+    yA = max(boxA[1], boxB[1])
+    xB = min(boxA[0] + boxA[2], boxB[0] + boxB[2])
+    yB = min(boxA[1] + boxA[3], boxB[1] + boxB[3])
+
+    interArea = max(0, xB - xA) * max(0, yB - yA)
+    boxAArea = boxA[2] * boxA[3]
+    boxBArea = boxB[2] * boxB[3]
+
+    iou = interArea / float(boxAArea + boxBArea - interArea)
+    return iou
 
 
 # ---------------------------------------------------------------------------
@@ -35,6 +120,28 @@ def compute_phash(image: np.ndarray, hash_size: int = 8) -> imagehash.ImageHash:
 def phash_distance(a: imagehash.ImageHash, b: imagehash.ImageHash) -> int:
     """Hamming distance between two pHashes."""
     return int(a - b)
+
+
+def load_simple_templates(templates_dir: str | Path) -> List[np.ndarray]:
+    """Load all images from *templates_dir* as a list of numpy arrays."""
+    dirpath = Path(templates_dir)
+    templates: List[np.ndarray] = []
+
+    if not dirpath.exists():
+        logger.warning("Templates directory '%s' does not exist.", dirpath)
+        return templates
+
+    for path in sorted(dirpath.iterdir()):
+        if path.is_file() and path.suffix.lower() in SUPPORTED_EXTENSIONS:
+            img = cv2.imread(str(path))
+            if img is None:
+                logger.warning("Could not read template image: %s", path)
+                continue
+            templates.append(img)
+            logger.debug("Loaded template from %s", path.name)
+
+    logger.info("Loaded %d templates from '%s'", len(templates), dirpath)
+    return templates
 
 
 # ---------------------------------------------------------------------------
@@ -82,44 +189,3 @@ def load_agent_templates(templates_dir: str | Path) -> List[AgentTemplate]:
 
     logger.info("Loaded %d agent templates from '%s'", len(templates), dirpath)
     return templates
-
-
-def identify_agent(
-    candidate: np.ndarray,
-    templates: List[AgentTemplate],
-    phash_threshold: int = 10,
-) -> Tuple[Optional[str], float]:
-    """Identify an agent in *candidate* ROI by pHash comparison.
-
-    Parameters
-    ----------
-    candidate:
-        Cropped BGR image of the suspected agent portrait area.
-    templates:
-        Pre-loaded agent templates.
-    phash_threshold:
-        Maximum Hamming distance to count as a match.
-
-    Returns
-    -------
-    (agent_name, confidence) or (None, 0.0)
-        *confidence* is ``1 - hamming / 64`` normalised to [0, 1].
-    """
-    if not templates or candidate is None or candidate.size == 0:
-        return None, 0.0
-
-    candidate_hash = compute_phash(candidate)
-    best_name: Optional[str] = None
-    best_dist = phash_threshold + 1
-
-    for tmpl in templates:
-        dist = phash_distance(candidate_hash, tmpl.phash)
-        if dist < best_dist:
-            best_dist = dist
-            best_name = tmpl.name
-
-    if best_name is None:
-        return None, 0.0
-
-    confidence = max(0.0, 1.0 - best_dist / 64.0)
-    return best_name, confidence

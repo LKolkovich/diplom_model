@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
 from app.models import ASRSegment, CVDetection, FusedSegment
+from app.config import Settings
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +37,7 @@ class SpeakingInterval:
     agent: str
     start: float
     end: float
+    avg_confidence: float = 0.0
 
 
 def _build_intervals(
@@ -46,24 +48,43 @@ def _build_intervals(
     if not detections:
         return []
 
-    sorted_det = sorted(detections, key=lambda d: d.timestamp)
-    intervals: List[SpeakingInterval] = []
+    agent_groups = defaultdict(list)
+    for det in detections:
+        agent_groups[det.agent_name].append(det)
 
-    current: Optional[SpeakingInterval] = None
-    for det in sorted_det:
-        if current is None:
-            current = SpeakingInterval(agent=det.agent_name, start=det.timestamp, end=det.timestamp)
-        elif det.agent_name == current.agent and (det.timestamp - current.end) <= merge_gap:
-            current.end = det.timestamp
-        else:
-            intervals.append(current)
-            current = SpeakingInterval(agent=det.agent_name, start=det.timestamp, end=det.timestamp)
+    all_intervals: List[SpeakingInterval] = []
 
-    if current is not None:
-        intervals.append(current)
+    for agent_name, dets in agent_groups.items():
+        sorted_det = sorted(dets, key=lambda d: d.timestamp)
+        current: Optional[List[CVDetection]] = None
+        
+        for det in sorted_det:
+            if current is None:
+                current = [det]
+            elif (det.timestamp - current[-1].timestamp) <= merge_gap:
+                current.append(det)
+            else:
+                avg_conf = sum(d.confidence for d in current) / len(current)
+                all_intervals.append(SpeakingInterval(
+                    agent=agent_name, 
+                    start=current[0].timestamp, 
+                    end=current[-1].timestamp,
+                    avg_confidence=avg_conf
+                ))
+                current = [det]
+        
+        if current:
+            avg_conf = sum(d.confidence for d in current) / len(current)
+            all_intervals.append(SpeakingInterval(
+                agent=agent_name, 
+                start=current[0].timestamp, 
+                end=current[-1].timestamp,
+                avg_confidence=avg_conf
+            ))
 
-    logger.info("M5 – built %d speaking intervals from %d CV detections", len(intervals), len(detections))
-    return intervals
+    all_intervals.sort(key=lambda x: x.start)
+    logger.info("M5 – built %d speaking intervals from %d CV detections", len(all_intervals), len(detections))
+    return all_intervals
 
 
 def _overlap(a_start: float, a_end: float, b_start: float, b_end: float) -> float:
@@ -73,25 +94,34 @@ def _overlap(a_start: float, a_end: float, b_start: float, b_end: float) -> floa
 def _score_agents_for_segment(
     seg: ASRSegment,
     intervals: List[SpeakingInterval],
-) -> Dict[str, float]:
-    scores: Dict[str, float] = defaultdict(float)
+) -> Dict[str, Tuple[float, float]]:
+    # agent -> (total_overlap, sum_weighted_confidence)
+    scores: Dict[str, List[float]] = defaultdict(lambda: [0.0, 0.0])
     for iv in intervals:
         ov = _overlap(seg.start, seg.end, iv.start, iv.end)
         if ov > 0:
-            scores[iv.agent] += ov
-    return scores
+            scores[iv.agent][0] += ov
+            scores[iv.agent][1] += ov * iv.avg_confidence
+    
+    # agent -> (total_overlap, avg_confidence)
+    final_scores = {}
+    for agent, (ov, weighted_conf) in scores.items():
+        final_scores[agent] = (ov, weighted_conf / ov if ov > 0 else 0.0)
+    return final_scores
 
 
 def _build_speaker_map(
     segments: List[ASRSegment],
     intervals: List[SpeakingInterval],
+    settings: Settings,
 ) -> Dict[str, str]:
     """Map generic speaker labels to agent names based on temporal coverage.
 
     Coverage is calculated as (total overlap with agent) / (total speaker duration).
     """
     speaker_durations: Dict[str, float] = defaultdict(float)
-    agent_overlaps: Dict[str, Dict[str, float]] = defaultdict(lambda: defaultdict(float))
+    # speaker -> agent -> (total_overlap, sum_weighted_confidence)
+    speaker_agent_stats: Dict[str, Dict[str, List[float]]] = defaultdict(lambda: defaultdict(lambda: [0.0, 0.0]))
 
     for seg in segments:
         duration = seg.end - seg.start
@@ -99,40 +129,42 @@ def _build_speaker_map(
             continue
         speaker_durations[seg.speaker] += duration
         scores = _score_agents_for_segment(seg, intervals)
-        for agent, overlap in scores.items():
-            agent_overlaps[seg.speaker][agent] += overlap
+        for agent, (overlap, avg_conf) in scores.items():
+            speaker_agent_stats[seg.speaker][agent][0] += overlap
+            speaker_agent_stats[seg.speaker][agent][1] += overlap * avg_conf
 
     speaker_map: Dict[str, str] = {}
     for speaker, total_duration in speaker_durations.items():
-        if speaker not in agent_overlaps:
+        if speaker not in speaker_agent_stats:
             continue
 
-        # Calculate coverage for each agent
-        coverages = {
-            agent: (overlap / total_duration)
-            for agent, overlap in agent_overlaps[speaker].items()
-        }
+        # Calculate coverage and average confidence for each agent
+        candidates = []
+        for agent, stats in speaker_agent_stats[speaker].items():
+            overlap = stats[0]
+            avg_conf = stats[1] / overlap if overlap > 0 else 0.0
+            coverage = overlap / total_duration
+            
+            if coverage >= settings.fusion_coverage_threshold and avg_conf >= settings.fusion_confidence_threshold:
+                candidates.append((agent, coverage, avg_conf))
 
-        # Select agent with highest coverage
-        best_agent = max(coverages, key=lambda a: coverages[a])
-        best_coverage = coverages[best_agent]
-
-        logger.info(
-            "M5 – Speaker %s best match: %s (coverage: %.2f%%)",
-            speaker,
-            best_agent,
-            best_coverage * 100,
-        )
-
-        # Require a minimum coverage to perform mapping (e.g., 20%)
-        if best_coverage >= 0.20:
+        if len(candidates) == 1:
+            best_agent, best_coverage, best_conf = candidates[0]
             speaker_map[speaker] = best_agent
-        else:
-            logger.warning(
-                "M5 – Low coverage for speaker %s (%.2f%%); mapping rejected",
-                speaker,
-                best_coverage * 100,
+            logger.info(
+                "M5 – Speaker %s strong match: %s (coverage: %.2f%%, conf: %.2f)",
+                speaker, best_agent, best_coverage * 100, best_conf
             )
+        elif len(candidates) > 1:
+            logger.warning(
+                "M5 – Speaker %s has multiple strong candidates: %s. Mapping rejected due to ambiguity.",
+                speaker, [c[0] for c in candidates]
+            )
+        else:
+            # Fallback to old behavior but with warning? 
+            # Or just don't map if no strong evidence.
+            # The plan says: "Assign agent ONLY if exactly one candidate meets..."
+            logger.info("M5 – Speaker %s has no strong CV evidence.", speaker)
 
     return speaker_map
 
@@ -140,6 +172,7 @@ def _build_speaker_map(
 def fuse(
     asr_segments: List[ASRSegment],
     cv_detections: List[CVDetection],
+    settings: Settings,
     merge_gap: float = DEFAULT_MERGE_GAP,
 ) -> List[FusedSegment]:
     """Fuse ASR and CV data into speaker-labelled transcript segments.
@@ -150,6 +183,8 @@ def fuse(
         Output of M3 – timestamped transcript segments with generic speaker IDs.
     cv_detections:
         Output of M4 – per-frame detections of which agent is speaking.
+    settings:
+        Application settings including fusion thresholds.
     merge_gap:
         Maximum gap (seconds) between consecutive same-agent detections
         before they are treated as separate intervals.
@@ -167,7 +202,7 @@ def fuse(
         ]
 
     intervals = _build_intervals(cv_detections, merge_gap)
-    speaker_map = _build_speaker_map(asr_segments, intervals)
+    speaker_map = _build_speaker_map(asr_segments, intervals, settings)
 
     fused: List[FusedSegment] = []
     for seg in asr_segments:

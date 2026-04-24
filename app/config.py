@@ -18,14 +18,28 @@ class Settings(BaseSettings):
     frame_rate: int = 5
     output_dir: Path = Path("output")
     templates_dir: Path = Path("templates/agents")
+    mic_templates_dir: Path = Path("templates/mic")
 
     debug_frames: bool = False
     debug_frames_dir: Path = Path("debug_frames")
 
+    video_mode: Literal["roi_crop", "full_frame"] = "roi_crop"
     voicechat_roi: str = "0.0,0.15,0.075,0.65"
     phash_threshold: int = 10
 
-    @field_validator("output_dir", "templates_dir", "debug_frames_dir", mode="before")
+    # CV Settings
+    cv_portrait_threshold: float = 0.7
+    cv_mic_threshold: float = 0.7
+    cv_dx_limit: float = 0.1  # fraction of width
+    cv_dy_limit: float = 0.05 # fraction of height
+    cv_temporal_k: int = 3
+    cv_temporal_n: int = 5
+
+    # Fusion Settings
+    fusion_coverage_threshold: float = 0.5
+    fusion_confidence_threshold: float = 0.8
+
+    @field_validator("output_dir", "templates_dir", "mic_templates_dir", "debug_frames_dir", mode="before")
     @classmethod
     def _ensure_path(cls, v: object) -> Path:
         p = Path(str(v))

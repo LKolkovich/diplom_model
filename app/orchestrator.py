@@ -112,7 +112,11 @@ def run_pipeline(
 
         _update(task, "EXTRACTING_FRAMES", ModuleTag.m2_frames)
         logger.info("[%s] M2 – FrameExtractor", task_id)
-        roi = settings.roi_as_tuple()
+        video_mode = config.video_mode or settings.video_mode
+        if video_mode == "roi_crop":
+            roi = settings.roi_as_tuple()
+        else:
+            roi = None
 
         _update(task, "TRANSCRIBING", ModuleTag.m3_asr)
         logger.info("[%s] M3 – WhisperXASR", task_id)
@@ -134,15 +138,16 @@ def run_pipeline(
             video_path=video_path,
             roi=roi,
             target_fps=settings.frame_rate,
-            templates_dir=portraits_override or settings.templates_dir,
-            phash_threshold=settings.phash_threshold,
+            agent_templates_dir=portraits_override or settings.templates_dir,
+            mic_templates_dir=settings.mic_templates_dir,
+            settings=settings,
             debug_frames=settings.debug_frames,
             debug_frames_dir=settings.debug_frames_dir,
         )
 
         _update(task, "FUSING", ModuleTag.m5_fusion)
         logger.info("[%s] M5 – FusionEngine", task_id)
-        fused = m5_fusion_engine.fuse(asr_segments, cv_detections)
+        fused = m5_fusion_engine.fuse(asr_segments, cv_detections, settings=settings)
 
         _update(task, "EXPORTING", ModuleTag.m6_export)
         logger.info("[%s] M6 – SRTExporter", task_id)

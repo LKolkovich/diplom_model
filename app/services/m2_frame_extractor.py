@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterator, Tuple
+from typing import Iterator, Tuple, Optional
 
 import cv2
 import numpy as np
@@ -48,7 +48,7 @@ def _crop_roi(frame: np.ndarray, roi: Tuple[float, float, float, float]) -> np.n
 
 def iter_frames(
     video_path: str | Path,
-    roi: Tuple[float, float, float, float],
+    roi: Optional[Tuple[float, float, float, float]],
     target_fps: int = 5,
     debug_frames: bool = False,
     debug_frames_dir: Path | str = "debug_frames",
@@ -60,7 +60,7 @@ def iter_frames(
     video_path:
         Path to the source video.
     roi:
-        Fractional (x1, y1, x2, y2) region of interest.
+        Fractional (x1, y1, x2, y2) region of interest. If None, yield full frames.
     target_fps:
         How many frames per second to sample.
     debug_frames:
@@ -80,11 +80,12 @@ def iter_frames(
     frame_interval = max(1, round(native_fps / target_fps))
 
     logger.info(
-        "M2 – extracting frames from '%s' (native %.1f fps → every %d frames, ~%d fps)",
+        "M2 – extracting frames from '%s' (native %.1f fps → every %d frames, ~%d fps, ROI=%s)",
         path.name,
         native_fps,
         frame_interval,
         target_fps,
+        roi,
     )
 
     if debug_frames:
@@ -105,7 +106,11 @@ def iter_frames(
 
             if frame_idx % frame_interval == 0:
                 timestamp = frame_idx / native_fps
-                roi_frame = _crop_roi(bgr, roi)
+                
+                if roi is not None:
+                    roi_frame = _crop_roi(bgr, roi)
+                else:
+                    roi_frame = bgr
 
                 if debug_frames and debug_dir:
                     # Save as PNG
@@ -126,7 +131,7 @@ def iter_frames(
 def extract_frames_to_disk(
     video_path: str | Path,
     output_dir: str | Path,
-    roi: Tuple[float, float, float, float],
+    roi: Optional[Tuple[float, float, float, float]],
     target_fps: int = 5,
 ) -> list[Path]:
     """Write cropped frames as JPEG files and return their paths."""

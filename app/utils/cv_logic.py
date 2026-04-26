@@ -50,7 +50,10 @@ def match_templates(
         return []
 
     if len(image.shape) == 3:
-        gray_image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        if image.shape[2] == 4:
+            gray_image = cv2.cvtColor(image, cv2.COLOR_BGRA2GRAY)
+        else:
+            gray_image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     else:
         gray_image = image
 
@@ -59,7 +62,10 @@ def match_templates(
             continue
         
         if len(template.shape) == 3:
-            gray_template = cv2.cvtColor(template, cv2.COLOR_BGR2GRAY)
+            if template.shape[2] == 4:
+                gray_template = cv2.cvtColor(template, cv2.COLOR_BGRA2GRAY)
+            else:
+                gray_template = cv2.cvtColor(template, cv2.COLOR_BGR2GRAY)
         else:
             gray_template = template
             
@@ -137,8 +143,15 @@ def compute_iou(boxA, boxB):
 # ---------------------------------------------------------------------------
 
 def compute_phash(image: np.ndarray, hash_size: int = 8) -> imagehash.ImageHash:
-    """Compute a perceptual hash for a BGR or greyscale *image* array."""
-    pil = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
+    """Compute a perceptual hash for a BGR, BGRA, or greyscale *image* array."""
+    if len(image.shape) == 3:
+        if image.shape[2] == 4:
+            rgb = cv2.cvtColor(image, cv2.COLOR_BGRA2RGB)
+        else:
+            rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    else:
+        rgb = cv2.cvtColor(image, cv2.COLOR_GRAY2RGB)
+    pil = Image.fromarray(rgb)
     return imagehash.phash(pil, hash_size=hash_size)
 
 
@@ -184,11 +197,41 @@ class AgentTemplate:
         self.phash = compute_phash(image)
 
 
-def load_agent_templates(templates_dir: str | Path) -> List[AgentTemplate]:
+def normalize_template(image: np.ndarray, target_size: int = 512) -> np.ndarray:
+    """Resize image to target_size (preserving aspect ratio) and pad with transparent BGRA."""
+    h, w = image.shape[:2]
+    
+    # Add alpha channel if not present
+    if len(image.shape) == 2:
+        image = cv2.cvtColor(image, cv2.COLOR_GRAY_BGRA)
+    elif image.shape[2] == 3:
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2BGRA)
+    
+    # Calculate scale to fit within target_size
+    scale = target_size / max(h, w)
+    new_w, new_h = int(w * scale), int(h * scale)
+    resized = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
+    
+    # Create target image with transparency (black padding when converted to grayscale)
+    result = np.zeros((target_size, target_size, 4), dtype=np.uint8)
+    
+    # Center the resized image
+    x_offset = (target_size - new_w) // 2
+    y_offset = (target_size - new_h) // 2
+    result[y_offset:y_offset+new_h, x_offset:x_offset+new_w] = resized
+    
+    return result
+
+
+def load_agent_templates(
+    templates_dir: str | Path, agents_list: Optional[List[str]] = None
+) -> List[AgentTemplate]:
     """Load all agent portrait images from *templates_dir*.
 
     Each image file should be named after the agent, e.g. ``jett.png``,
     ``reyna.png``.  Subdirectories are ignored.
+
+    If *agents_list* is provided, only agents in that list will be loaded.
 
     Returns
     -------
@@ -202,13 +245,23 @@ def load_agent_templates(templates_dir: str | Path) -> List[AgentTemplate]:
         logger.warning("Templates directory '%s' does not exist.", dirpath)
         return templates
 
+    if agents_list:
+        agents_list = [a.lower() for a in agents_list]
+
     for path in sorted(dirpath.iterdir()):
         if path.is_file() and path.suffix.lower() in SUPPORTED_EXTENSIONS:
-            img = cv2.imread(str(path))
+            agent_name = path.stem.lower()
+            if agents_list and agent_name not in agents_list:
+                continue
+
+            img = cv2.imread(str(path), cv2.IMREAD_UNCHANGED)
             if img is None:
                 logger.warning("Could not read template image: %s", path)
                 continue
-            agent_name = path.stem.lower()
+            
+            # Normalize to 512x512 BGRA
+            img = normalize_template(img, target_size=512)
+            
             templates.append(AgentTemplate(name=agent_name, image=img))
             logger.debug("Loaded template '%s' from %s", agent_name, path.name)
 

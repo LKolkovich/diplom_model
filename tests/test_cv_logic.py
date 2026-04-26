@@ -60,6 +60,8 @@ def test_load_agent_templates(agent_template_dir: Path) -> None:
     assert len(templates) == 3
     names = {t.name for t in templates}
     assert names == {"jett", "reyna", "sage"}
+    for t in templates:
+        assert t.image.shape == (512, 512, 4)
 
 
 def test_identify_agent_returns_closest(agent_template_dir: Path) -> None:

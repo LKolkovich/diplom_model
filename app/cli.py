@@ -40,7 +40,7 @@ def main():
     full_parser = subparsers.add_parser("run_pipeline", help="Run the complete M1-M6 pipeline")
     full_parser.add_argument("video_path", help="Path to input video")
     full_parser.add_argument("--roi", help="Explicit ROI (x1,y1,x2,y2). Overrides settings if video-mode is full_frame.")
-    full_parser.add_argument("--video-mode", choices=["full_frame", "user_crop"], help="Video mode")
+    full_parser.add_argument("--video-mode", choices=["full_frame", "user_crop"], default="full_frame", help="Video mode (default: full_frame)")
     full_parser.add_argument("--hf-token", help="Hugging Face token for WhisperX")
     full_parser.add_argument("--min-speakers", type=int, help="Min speakers")
     full_parser.add_argument("--max-speakers", type=int, help="Max speakers")
@@ -79,12 +79,17 @@ def main():
 
 def run_full(args):
     settings = get_settings()
+    
+    update_data = {}
     if args.hf_token:
-        settings.hf_token = args.hf_token
+        update_data["hf_token"] = args.hf_token
     if args.output_dir:
-        settings.output_dir = Path(args.output_dir)
+        update_data["output_dir"] = Path(args.output_dir)
     if args.roi:
-        settings.voicechat_roi = args.roi
+        update_data["voicechat_roi"] = args.roi
+    
+    if update_data:
+        settings = settings.model_copy(update=update_data)
     
     config = ProcessConfig(
         min_speakers=args.min_speakers,

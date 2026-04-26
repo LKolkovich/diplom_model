@@ -4,24 +4,23 @@ python-multipart==0.0.9
 pydantic==2.7.1
 pydantic-settings==2.3.0
 
-# Audio / ASR
-whisperx==3.1.5
-faster-whisper==1.0.3
-torch>=2.0.0
-torchaudio>=2.0.0
-librosa==0.10.2
+# ML-стек — pip сам разрешит граф зависимостей
+whisperx
+torch
+torchaudio
+librosa
 soundfile==0.12.1
 ffmpeg-python==0.2.0
 
 # Computer Vision
-opencv-python-headless==4.9.0.80
+opencv-python-headless
 imagehash==4.3.1
-Pillow==10.3.0
-numpy==1.26.4
-scipy==1.13.0
+Pillow
+numpy
+scipy
 
-# Diarization (used by whisperx)
-pyannote.audio==3.3.0
+# Diarization
+pyannote.audio
 
 # Utilities
 aiofiles==23.2.1

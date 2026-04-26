@@ -51,11 +51,11 @@ curl -O http://localhost:8000/tasks/<task_id>/result
 
 ## CV Detection System
 
-The CV system (M4) detects speaking agents by matching templates for agent portraits. It features automatic resolution-agnostic calibration that determines the correct template scale for any source resolution by searching for a reference template at various scales in the first few frames.
+The CV system (M4) detects speaking agents by matching templates for agent portraits. M4 automatically calibrates portrait template size for the current video resolution and ROI before the main detection pass. This allows one template set to work across different resolutions without manual resizing.
 
 ### Templates
 Place templates in the following directory:
-- `templates/agents/`: Agent portrait images (e.g., `jett.png`, `sage.png`).
+- `templates/agents/`: Agent portrait images (e.g., `jett.png`, `sage.png`). Templates can be prepared in any arbitrary convenient size.
 
 ### Configuration (Environment Variables)
 

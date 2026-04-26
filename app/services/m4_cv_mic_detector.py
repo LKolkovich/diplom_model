@@ -41,6 +41,97 @@ from app.config import Settings
 logger = logging.getLogger(__name__)
 
 
+def _get_fallback_scale(frame_height: int, ref_template_height: int, settings: Settings) -> float:
+    """Calculate fallback scale based on 8% of ROI height."""
+    target_height = frame_height * settings.cv_fallback_size_percent
+    return target_height / ref_template_height
+
+
+def calibrate_templates(
+    video_path: str | Path,
+    roi: Optional[tuple[float, float, float, float]],
+    target_fps: int,
+    agent_templates: List[AgentTemplate],
+    settings: Settings,
+) -> float:
+    """Two-stage automatic template calibration."""
+    if not agent_templates:
+        return 1.0
+
+    ref_template = agent_templates[0].image
+    ref_h, _ = ref_template.shape[:2]
+
+    coarse_frames = []
+    all_calib_frames = []
+    for i, ef in enumerate(iter_frames(video_path, roi, target_fps)):
+        if i >= settings.cv_calibration_max_frames:
+            break
+        all_calib_frames.append(ef.frame)
+        if i % 5 == 0:
+            coarse_frames.append(ef.frame)
+
+    if not all_calib_frames:
+        logger.warning("No frames found for calibration, using default scale 1.0")
+        return 1.0
+
+    # Stage 1: Coarse
+    coarse_scales = [round(0.5 + i * 0.1, 1) for i in range(11)]  # 0.5 to 1.5
+    scale_scores = []
+
+    for scale in coarse_scales:
+        resized = cv2.resize(ref_template, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
+        gray_resized = cv2.cvtColor(resized, cv2.COLOR_BGR2GRAY)
+        max_score = 0.0
+        for frame in coarse_frames:
+            gray_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            if gray_resized.shape[0] > gray_frame.shape[0] or gray_resized.shape[1] > gray_frame.shape[1]:
+                continue
+            res = cv2.matchTemplate(gray_frame, gray_resized, cv2.TM_CCOEFF_NORMED)
+            _, max_val, _, _ = cv2.minMaxLoc(res)
+            max_score = max(max_score, max_val)
+        scale_scores.append((scale, max_score))
+
+    scale_scores.sort(key=lambda x: x[1], reverse=True)
+    top2 = scale_scores[:2]
+
+    if top2[0][1] < settings.cv_portrait_threshold:
+        fallback = _get_fallback_scale(all_calib_frames[0].shape[0], ref_h, settings)
+        logger.info(
+            "Calibration FALLBACK: max score %.2f < threshold %.2f. Using fallback scale %.2f",
+            top2[0][1],
+            settings.cv_portrait_threshold,
+            fallback,
+        )
+        return fallback
+
+    # Stage 2: Fine
+    h1 = int(ref_h * top2[0][0])
+    h2 = int(ref_h * top2[1][0])
+    min_h = max(1, min(h1, h2) - 2)
+    max_h = max(min_h + 1, max(h1, h2) + 2)
+
+    fine_scores = []
+    for h in range(min_h, max_h + 1):
+        scale = h / ref_h
+        resized = cv2.resize(ref_template, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
+        gray_resized = cv2.cvtColor(resized, cv2.COLOR_BGR2GRAY)
+        max_score = 0.0
+        for frame in all_calib_frames:
+            gray_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            if gray_resized.shape[0] > gray_frame.shape[0] or gray_resized.shape[1] > gray_frame.shape[1]:
+                continue
+            res = cv2.matchTemplate(gray_frame, gray_resized, cv2.TM_CCOEFF_NORMED)
+            _, max_val, _, _ = cv2.minMaxLoc(res)
+            max_score = max(max_score, max_val)
+        fine_scores.append((scale, max_score))
+
+    fine_scores.sort(key=lambda x: x[1], reverse=True)
+    best_scale, best_score = fine_scores[0]
+
+    logger.info("Calibration SUCCESS: scale %.2f (score %.2f)", best_scale, best_score)
+    return best_scale
+
+
 def detect_speakers(
     video_path: str | Path,
     roi: Optional[tuple[float, float, float, float]],
@@ -55,8 +146,16 @@ def detect_speakers(
     
     if not agent_templates:
         logger.warning("No agent templates found in %s", agent_templates_dir)
+        return [], 0
 
-    agent_images = [at.image for at in agent_templates]
+    # 1. Calibrate templates
+    calibrated_scale = calibrate_templates(video_path, roi, target_fps, agent_templates, settings)
+    
+    # 2. Resize agent images
+    agent_images = []
+    for at in agent_templates:
+        resized = cv2.resize(at.image, None, fx=calibrated_scale, fy=calibrated_scale, interpolation=cv2.INTER_AREA)
+        agent_images.append(resized)
     
     raw_frame_detections: List[Dict[str, float]] = [] # list of {agent_name: confidence}
     timestamps: List[float] = []

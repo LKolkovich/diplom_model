@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Dict, List, Optional, Literal
+from typing import Dict, List, Optional, Literal, Set
 
 from pydantic import BaseModel, Field
 
@@ -95,3 +95,10 @@ class CVDetection(BaseModel):
     timestamp: float
     agent_name: str
     confidence: float
+
+
+class DiscoveryResult(BaseModel):
+    active_agents: Set[str]
+    median_scale: float
+    anchor_zone: Optional[tuple[int, int, int, int]]
+    stats: Dict[str, Dict]  # {agent_name: {count, scales, bboxes}}

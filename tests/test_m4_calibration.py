@@ -41,18 +41,17 @@ def test_run_discovery_phase_success(settings, agent_template):
     mock_frames = [ExtractedFrame(index=0, timestamp=0.0, frame=frame)]
     
     with patch("app.services.m4_cv_mic_detector.iter_frames", return_value=iter(mock_frames)):
-        active_templates, optimal_scale, anchor_zone = run_discovery_phase("fake_path", None, [agent_template], settings)
+        discovery = run_discovery_phase("fake_path", None, [agent_template], settings)
         
-    assert len(active_templates) == 1
-    assert active_templates[0].name == "test_agent"
-    assert 0.09 <= optimal_scale <= 0.11
-    assert anchor_zone is not None
+    assert "test_agent" in discovery.active_agents
+    assert 0.09 <= discovery.median_scale <= 0.11
+    assert discovery.anchor_zone is not None
     # anchor zone should be around (50-5, 50-5, 50+51+50, 50+51+50) -> (45, 45, 151, 151)
     # wait, target_size is 51. 50+51 = 101. 101+50 = 151.
-    assert anchor_zone[0] == 45
-    assert anchor_zone[1] == 45
-    assert anchor_zone[2] >= 150
-    assert anchor_zone[3] >= 150
+    assert discovery.anchor_zone[0] == 45
+    assert discovery.anchor_zone[1] == 45
+    assert discovery.anchor_zone[2] >= 150
+    assert discovery.anchor_zone[3] >= 150
 
 def test_run_discovery_phase_failed(settings, agent_template):
     # Blank frames only
@@ -60,8 +59,11 @@ def test_run_discovery_phase_failed(settings, agent_template):
     mock_frames = [ExtractedFrame(index=0, timestamp=0.0, frame=frame)]
     
     with patch("app.services.m4_cv_mic_detector.iter_frames", return_value=iter(mock_frames)):
-        active_templates, optimal_scale, anchor_zone = run_discovery_phase("fake_path", None, [agent_template], settings)
+        discovery = run_discovery_phase("fake_path", None, [agent_template], settings)
     
-    assert len(active_templates) == 1 # Returns all templates if failed
-    assert optimal_scale == 0.1
-    assert anchor_zone is None
+    assert "test_agent" in discovery.active_agents # Returns all templates if failed
+    # fallback scale based on ROI height (200) and fallback % (0.08)
+    # fallback_size = 200 * 0.08 = 16
+    # optimal_scale = 16 / 512 = 0.03125
+    assert 0.03 <= discovery.median_scale <= 0.04
+    assert discovery.anchor_zone is None

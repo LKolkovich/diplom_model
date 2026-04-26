@@ -73,8 +73,13 @@ def test_detect_speakers_calls_discovery_once(tmp_path, monkeypatch):
     def mock_discovery(*args, **kwargs):
         discovery_calls.append(True)
         # Return something to avoid failure
-        img = np.zeros((512, 512, 4), dtype=np.uint8)
-        return [AgentTemplate(name="jett", image=img)], 0.1, (10, 10, 100, 100)
+        from app.models import DiscoveryResult
+        return DiscoveryResult(
+            active_agents={"jett"},
+            median_scale=0.1,
+            anchor_zone=(10, 10, 100, 100),
+            stats={}
+        )
 
     monkeypatch.setattr("app.services.m4_cv_mic_detector.run_discovery_phase", mock_discovery)
     

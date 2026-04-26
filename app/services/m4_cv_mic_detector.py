@@ -28,7 +28,7 @@ import cv2
 # pylint: disable=unused-import
 import numpy as np
 
-from app.models import CVDetection
+from app.models import CVDetection, DiscoveryResult
 from app.services.m2_frame_extractor import iter_frames
 from app.utils.cv_logic import (
     AgentTemplate,
@@ -46,11 +46,14 @@ def run_discovery_phase(
     roi: Optional[tuple[float, float, float, float]],
     agent_templates: List[AgentTemplate],
     settings: Settings,
-) -> tuple[List[AgentTemplate], float, Optional[tuple[int, int, int, int]]]:
+) -> DiscoveryResult:
     """
     Discovery Phase: Scans the video at a low FPS to identify active agents,
     optimal scale, and Anchor Zone.
     """
+    if not agent_templates:
+        raise ValueError("M4 – Discovery phase called with empty agent_templates")
+
     logger.info("M4 – starting Discovery Phase (%.1f FPS full-video scan)...", settings.cv_discovery_fps)
     
     primary_scales = np.linspace(0.03, 0.15, num=15)
@@ -59,9 +62,6 @@ def run_discovery_phase(
     # agent_name -> list of (scale, x, y, w, h)
     detections_by_agent: Dict[str, List[Tuple[float, int, int, int, int]]] = {}
     
-    if not agent_templates:
-        return [], 0.1, None
-
     template_size = agent_templates[0].image.shape[0]
     
     for ef in iter_frames(video_path, roi, target_fps=settings.cv_discovery_fps, debug_frames=False):
@@ -101,12 +101,28 @@ def run_discovery_phase(
     }
     
     if not active_agents_info:
-        logger.warning("M4 – Discovery Phase FAILED: no agents found with >= %d detections", 
+        logger.warning("M4 – Discovery failed: no agents with >= %d detections, falling back", 
                        settings.cv_discovery_min_detections)
-        return agent_templates, 0.1, None
+        
+        # Fallback: get a frame to calculate scale
+        try:
+            first_frame_iter = iter_frames(video_path, roi, target_fps=1.0, debug_frames=False)
+            first_ef = next(first_frame_iter)
+            frame_h = first_ef.frame.shape[0]
+        except (StopIteration, Exception):
+            frame_h = 100 # Very last resort
+            
+        fallback_size_px = max(1, int(frame_h * settings.cv_fallback_size_percent))
+        optimal_scale = fallback_size_px / template_size
+        
+        return DiscoveryResult(
+            active_agents={at.name for at in agent_templates},
+            median_scale=optimal_scale,
+            anchor_zone=None,
+            stats={}
+        )
     
     active_agent_names = sorted(list(active_agents_info.keys()))
-    active_templates = [at for at in agent_templates if at.name in active_agent_names]
     
     # Calculate optimal scale (median of all detections)
     all_scales = [d[0] for detections in active_agents_info.values() for d in detections]
@@ -131,10 +147,24 @@ def run_discovery_phase(
         int(max_y + 50)
     )
     
+    # Populate stats
+    stats = {}
+    for name, detections in active_agents_info.items():
+        stats[name] = {
+            "count": len(detections),
+            "scales": [d[0] for d in detections],
+            "bboxes": [(d[1], d[2], d[3], d[4]) for d in detections]
+        }
+    
     logger.info("M4 – Discovery Phase COMPLETE: active agents: %s, optimal scale: %.3f, Anchor Zone: %s",
                 active_agent_names, optimal_scale, anchor_zone)
     
-    return active_templates, optimal_scale, anchor_zone
+    return DiscoveryResult(
+        active_agents=set(active_agent_names),
+        median_scale=optimal_scale,
+        anchor_zone=anchor_zone,
+        stats=stats
+    )
 
 
 def detect_speakers(
@@ -161,19 +191,27 @@ def detect_speakers(
     # 1. Discovery Phase
     if settings.cv_skip_discovery:
         logger.info("M4 – skipping Discovery Phase as per settings")
-        active_templates = agent_templates
-        # If discovery skipped, use a fallback scale
-        # Trying to find a reasonable default scale if we don't have one
-        # Current logic used cv_fallback_size_percent, let's keep a similar fallback
-        optimal_scale = 0.1
-        anchor_zone = None
+        discovery = DiscoveryResult(
+            active_agents={at.name for at in agent_templates},
+            median_scale=0.1,
+            anchor_zone=None,
+            stats={}
+        )
     else:
-        active_templates, optimal_scale, anchor_zone = run_discovery_phase(
+        discovery = run_discovery_phase(
             video_path=video_path,
             roi=roi,
             agent_templates=agent_templates,
             settings=settings,
         )
+
+    active_templates = [t for t in agent_templates if t.name in discovery.active_agents]
+    optimal_scale = discovery.median_scale
+    anchor_zone = discovery.anchor_zone
+    
+    # IMPORTANT: The p_idx returned by match_templates corresponds to the index
+    # in the list of templates passed to it (active_templates).
+    # This assumption must be preserved for correct agent identification.
     
     # Prepare resized images for the active agents
     template_size = active_templates[0].image.shape[0]

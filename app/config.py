@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     debug_frames: bool = False
     debug_frames_dir: Path = Path("debug_frames")
 
-    video_mode: Literal["roi_crop", "full_frame"] = "roi_crop"
+    video_mode: Literal["full_frame", "user_crop"] = "full_frame"
     voicechat_roi: str = "0.0,0.15,0.075,0.65"
     phash_threshold: int = 10
 

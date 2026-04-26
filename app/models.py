@@ -37,7 +37,7 @@ class ProcessConfig(BaseModel):
     max_speakers: Optional[int] = Field(default=None, ge=1, le=10)
     language: Optional[str] = Field(default=None)
     initial_prompt: Optional[str] = Field(default=None)
-    video_mode: Optional[Literal["roi_crop", "full_frame"]] = Field(default=None)
+    video_mode: Optional[Literal["full_frame", "user_crop"]] = Field(default=None)
 
 
 class ProcessResponse(BaseModel):

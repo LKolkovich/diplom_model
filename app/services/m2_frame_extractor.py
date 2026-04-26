@@ -136,12 +136,16 @@ def extract_frames_to_disk(
     roi: Optional[Tuple[float, float, float, float]],
     target_fps: int = 5,
 ) -> list[Path]:
-    """Write cropped frames as JPEG files and return their paths."""
+    """Write cropped frames as JPEG files to disk.
+
+    Used by the CLI to exercise the frame extraction logic independently.
+    """
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
 
     paths: list[Path] = []
     for ef in iter_frames(video_path, roi, target_fps, debug_raw_frames=False):
+        # Save as JPEG for better compatibility/size than PNG for this use case
         dest = out / f"frame_{ef.index:06d}_{ef.timestamp:.3f}s.jpg"
         cv2.imwrite(str(dest), ef.frame, [cv2.IMWRITE_JPEG_QUALITY, 90])
         paths.append(dest)

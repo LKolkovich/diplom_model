@@ -40,7 +40,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 # 4. Submit a job (multipart/form-data)
 curl -X POST http://localhost:8000/tasks \
      -F "video=@/path/to/game.mp4" \
-     -F 'config={"video_mode": "roi_crop", "language": "en"}'
+     -F 'config={"video_mode": "full_frame", "language": "en"}'
 
 # 5. Poll for progress
 curl http://localhost:8000/tasks/<task_id>
@@ -62,8 +62,8 @@ Place templates in the following directories:
 
 | Variable | Default | Description |
 |---|---|---|
-| `VIDEO_MODE` | `roi_crop` | `roi_crop` (use `VOICECHAT_ROI`) or `full_frame` |
-| `VOICECHAT_ROI` | `0.0,0.15,0.075,0.65` | Fractional ROI (x1,y1,x2,y2) for `roi_crop` |
+| `VIDEO_MODE` | `full_frame` | `full_frame` (use `VOICECHAT_ROI`) or `user_crop` |
+| `VOICECHAT_ROI` | `0.0,0.15,0.075,0.65` | Fractional ROI (x1,y1,x2,y2) for `full_frame` |
 | `CV_PORTRAIT_THRESHOLD` | `0.7` | Matching threshold for agent portraits |
 | `CV_MIC_THRESHOLD` | `0.7` | Matching threshold for mic icons |
 | `CV_DX_LIMIT` | `0.1` | Max horizontal distance (fraction) for mic-portrait linking |

@@ -10,40 +10,73 @@ docker build -t valorant-pipeline .
 
 ## Running the CLI
 
-You can run the CLI through Docker by mounting your local data directory and providing the necessary environment variables.
+You can run the CLI through Docker by mounting your local directories and providing the necessary environment variables.
 
 ### Full Pipeline
 
+**Bash (Linux/macOS):**
 ```bash
 docker run --rm \
-  -v $(pwd)/data:/data \
+  -v $(pwd)/data:/workspace/data \
   -v $(pwd)/output:/workspace/output \
   -e HF_TOKEN="your_huggingface_token" \
   valorant-pipeline \
-  python app/cli.py full /data/video.mp4 --hf-token "your_huggingface_token"
+  python -m app.cli run_pipeline /workspace/data/video.mp4 --hf-token "your_huggingface_token"
+```
+
+**PowerShell (Windows):**
+```powershell
+docker run --rm `
+  -v ${PWD}/data:/workspace/data `
+  -v ${PWD}/output:/workspace/output `
+  -e HF_TOKEN="your_huggingface_token" `
+  valorant-pipeline `
+  python -m app.cli run_pipeline /workspace/data/video.mp4 --hf-token "your_huggingface_token"
 ```
 
 ### Frame Extraction (M2)
 
+**Bash:**
 ```bash
 docker run --rm \
-  -v $(pwd)/data:/data \
+  -v $(pwd)/data:/workspace/data \
   -v $(pwd)/output:/workspace/output \
   valorant-pipeline \
-  python app/cli.py run_m2 /data/video.mp4 /workspace/output/frames --fps 5
+  python -m app.cli run_m2 /workspace/data/video.mp4 /workspace/output/frames --fps 5
+```
+
+**PowerShell:**
+```powershell
+docker run --rm `
+  -v ${PWD}/data:/workspace/data `
+  -v ${PWD}/output:/workspace/output `
+  valorant-pipeline `
+  python -m app.cli run_m2 /workspace/data/video.mp4 /workspace/output/frames --fps 5
 ```
 
 ### CV Mic Detection (M4)
 
+**Bash:**
 ```bash
 docker run --rm \
-  -v $(pwd)/data:/data \
+  -v $(pwd)/data:/workspace/data \
   -v $(pwd)/output:/workspace/output \
   valorant-pipeline \
-  python app/cli.py run_m4 /data/video.mp4 /workspace/output/detections.json --debug-dir /workspace/output/debug
+  python -m app.cli run_m4 /workspace/data/video.mp4 /workspace/output/detections.json --debug-dir /workspace/output/debug
+```
+
+**PowerShell:**
+```powershell
+docker run --rm `
+  -v ${PWD}/data:/workspace/data `
+  -v ${PWD}/output:/workspace/output `
+  valorant-pipeline `
+  python -m app.cli run_m4 /workspace/data/video.mp4 /workspace/output/detections.json --debug-dir /workspace/output/debug
 ```
 
 ## Running the API
+
+If you wish to run the FastAPI server, you must override the default CMD:
 
 ```bash
 docker run -d \
@@ -51,7 +84,8 @@ docker run -d \
   -v $(pwd)/output:/workspace/output \
   -e HF_TOKEN="your_huggingface_token" \
   --name valorant-api \
-  valorant-pipeline
+  valorant-pipeline \
+  uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
 The API will be available at `http://localhost:8000`.
@@ -66,7 +100,7 @@ docker run --rm valorant-pipeline pytest
 
 ### Subcommands
 
-- `full`: Runs the complete M1-M6 pipeline.
+- `run_pipeline`: Runs the complete M1-M6 pipeline.
 - `run_m2`: Runs only frame extraction and saves frames to disk.
 - `run_m4`: Runs CV mic detection, outputs a JSON of detections, and optionally saves debug overlay frames.
 
@@ -77,4 +111,4 @@ docker run --rm valorant-pipeline pytest
 
 ### ROI Argument
 
-Both `full`, `run_m2`, and `run_m4` support an optional `--roi` argument (e.g., `--roi 0.0,0.15,0.075,0.65`) which overrides the default settings.
+Both `run_pipeline`, `run_m2`, and `run_m4` support an optional `--roi` argument (e.g., `--roi 0.0,0.15,0.075,0.65`) which overrides the default settings when `video_mode` is `full_frame`.

@@ -27,5 +27,5 @@ ENV PYTHONUNBUFFERED=1
 # Default port for FastAPI (though CLI is also supported)
 EXPOSE 8000
 
-# Default command to run the API
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Default command to run the CLI help
+CMD ["python", "-m", "app.cli", "--help"]

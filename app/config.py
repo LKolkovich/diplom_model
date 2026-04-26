@@ -30,6 +30,8 @@ class Settings(BaseSettings):
     cv_portrait_threshold: float = 0.7
     cv_temporal_k: int = 3
     cv_temporal_n: int = 5
+    cv_calibration_max_frames: int = 30
+    cv_fallback_size_percent: float = 0.08
 
     # Fusion Settings
     fusion_coverage_threshold: float = 0.5

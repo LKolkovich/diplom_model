@@ -22,7 +22,7 @@ from __future__ import annotations
 import logging
 import json
 from pathlib import Path
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Tuple
 
 import cv2
 # pylint: disable=unused-import
@@ -41,6 +41,140 @@ from app.config import Settings
 logger = logging.getLogger(__name__)
 
 
+def calibrate_templates(
+    video_path: str | Path,
+    roi: Optional[tuple[float, float, float, float]],
+    target_fps: int,
+    agent_templates: List[AgentTemplate],
+    settings: Settings,
+    max_calibration_frames: int = 30,
+) -> tuple[list[np.ndarray], int]:
+    """Two-stage automatic template calibration."""
+    if not agent_templates:
+        raise ValueError("No agent templates provided for calibration")
+
+    logger.info("M4 – starting template calibration (two-stage)...")
+
+    # We use the first template as a reference for sizing
+    ref_at = agent_templates[0]
+    original_size = ref_at.image.shape[0] # Assuming square templates as per patterns
+
+    # Stage 1: Coarse search
+    logger.info("M4 – Stage 1: coarse search (15 scales, max %d frames)", max_calibration_frames)
+    scales_coarse = np.linspace(0.1, 1.5, num=15)
+    
+    top_matches: List[Tuple[float, float, int, np.ndarray, int]] = [] # (scale, conf, frame_idx, frame_copy, agent_idx)
+
+    found_any = False
+    frame_count = 0
+    for ef in iter_frames(video_path, roi, target_fps, debug_frames=False):
+        if frame_count >= max_calibration_frames:
+            break
+        
+        frame = ef.frame
+        if frame.size == 0:
+            continue
+        
+        frame_count += 1
+        gray_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        
+        for scale in scales_coarse:
+            new_size = max(1, int(original_size * scale))
+            
+            for at_idx, at in enumerate(agent_templates):
+                resized = cv2.resize(at.image, (new_size, new_size), interpolation=cv2.INTER_AREA)
+                gray_resized = cv2.cvtColor(resized, cv2.COLOR_BGR2GRAY)
+                
+                if gray_resized.shape[0] > gray_frame.shape[0] or gray_resized.shape[1] > gray_frame.shape[1]:
+                    continue
+                
+                res = cv2.matchTemplate(gray_frame, gray_resized, cv2.TM_CCOEFF_NORMED)
+                _, max_val, _, _ = cv2.minMaxLoc(res)
+                
+                if max_val >= settings.cv_portrait_threshold:
+                    top_matches.append((float(scale), float(max_val), ef.index, frame.copy(), at_idx))
+                    found_any = True
+        
+        if found_any:
+            logger.info("M4 – found %d matches on frame #%d", len(top_matches), ef.index)
+            break
+
+    if not top_matches:
+        logger.warning("M4 – coarse search timeout after %d frames", frame_count)
+        logger.warning("M4 – coarse search FAILED: no agents detected in calibration window")
+        
+        # Fallback logic
+        # Need a frame to get height. If we have no frames at all, we might be in trouble but iter_frames should have yielded something if video is valid.
+        # Let's try to get one frame if we haven't already.
+        if frame_count == 0:
+             # This should ideally not happen if the video is valid and has frames
+             logger.error("M4 – no frames available even for fallback")
+             fallback_size_px = max(1, int(100 * settings.cv_fallback_size_percent)) # Totally arbitrary if no frame
+             frame_h = 100
+        else:
+             # We use the last frame seen
+             frame_h = frame.shape[0]
+             fallback_size_px = max(1, int(frame_h * settings.cv_fallback_size_percent))
+        
+        logger.warning("M4 – using FALLBACK: %dpx (%.0f%% of ROI height %dpx)", 
+                       fallback_size_px, settings.cv_fallback_size_percent * 100, frame_h)
+        
+        resized_templates = [
+            cv2.resize(at.image, (fallback_size_px, fallback_size_px), interpolation=cv2.INTER_AREA)
+            for at in agent_templates
+        ]
+        return resized_templates, fallback_size_px
+
+    # Stage 2: Fine search
+    top_matches.sort(key=lambda x: x[1], reverse=True)
+    top_2_scales = [
+        top_matches[0][0],
+        top_matches[1][0] if len(top_matches) > 1 else top_matches[0][0],
+    ]
+    
+    logger.info("M4 – Stage 1 COMPLETE: top scales [%.2f, %.2f], confidences [%.3f, %.3f]",
+                top_2_scales[0], top_2_scales[1], 
+                top_matches[0][1], top_matches[1][1] if len(top_matches) > 1 else top_matches[0][1])
+
+    min_size_px = max(1, int(original_size * min(top_2_scales)))
+    max_size_px = max(1, int(original_size * max(top_2_scales)))
+
+    calibration_frame = top_matches[0][3]
+    best_agent_idx = top_matches[0][4]
+    ref_at_fine = agent_templates[best_agent_idx]
+    gray_calib_frame = cv2.cvtColor(calibration_frame, cv2.COLOR_BGR2GRAY)
+    
+    logger.info("M4 – Stage 2: fine search (%d sizes from %dpx to %dpx, step 1px)", 
+                max_size_px - min_size_px + 1, min_size_px, max_size_px)
+    
+    best_size_px = min_size_px
+    best_confidence = -1.0
+    
+    for size_px in range(min_size_px, max_size_px + 1):
+        resized = cv2.resize(ref_at_fine.image, (size_px, size_px), interpolation=cv2.INTER_AREA)
+        gray_resized = cv2.cvtColor(resized, cv2.COLOR_BGR2GRAY)
+        
+        if gray_resized.shape[0] > gray_calib_frame.shape[0] or gray_resized.shape[1] > gray_calib_frame.shape[1]:
+            continue
+            
+        res = cv2.matchTemplate(gray_calib_frame, gray_resized, cv2.TM_CCOEFF_NORMED)
+        _, max_val, _, _ = cv2.minMaxLoc(res)
+        
+        if max_val > best_confidence:
+            best_confidence = max_val
+            best_size_px = size_px
+
+    logger.info("M4 – Stage 2 COMPLETE: optimal size=%dpx, confidence=%.3f", best_size_px, best_confidence)
+    logger.info("M4 – calibration SUCCESS: all %d templates %dx%d → %dx%d px", 
+                len(agent_templates), original_size, original_size, best_size_px, best_size_px)
+
+    resized_templates = [
+        cv2.resize(at.image, (best_size_px, best_size_px), interpolation=cv2.INTER_AREA)
+        for at in agent_templates
+    ]
+    return resized_templates, best_size_px
+
+
 def detect_speakers(
     video_path: str | Path,
     roi: Optional[tuple[float, float, float, float]],
@@ -54,9 +188,19 @@ def detect_speakers(
     agent_templates: List[AgentTemplate] = load_agent_templates(agent_templates_dir)
     
     if not agent_templates:
-        logger.warning("No agent templates found in %s", agent_templates_dir)
+        logger.error("No agent templates found in %s", agent_templates_dir)
+        # Match detailed requirements: guard before calling it and fail clearly
+        raise ValueError(f"No agent templates found in {agent_templates_dir}")
 
-    agent_images = [at.image for at in agent_templates]
+    # 1. Calibrate templates
+    agent_images, calibrated_size = calibrate_templates(
+        video_path=video_path,
+        roi=roi,
+        target_fps=target_fps,
+        agent_templates=agent_templates,
+        settings=settings,
+        max_calibration_frames=settings.cv_calibration_max_frames,
+    )
     
     raw_frame_detections: List[Dict[str, float]] = [] # list of {agent_name: confidence}
     timestamps: List[float] = []

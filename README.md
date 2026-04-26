@@ -51,11 +51,11 @@ curl -O http://localhost:8000/tasks/<task_id>/result
 
 ## CV Detection System
 
-The CV system (M4) detects speaking agents by matching templates for agent portraits. In this mode, we assume that agent portraits only appear in the voice chat panel when they are actively speaking.
+The CV system (M4) detects speaking agents by matching templates for agent portraits. M4 automatically calibrates portrait template size for the current video resolution and ROI before the main detection pass. This allows one template set to work across different resolutions without manual resizing.
 
 ### Templates
 Place templates in the following directory:
-- `templates/agents/`: Agent portrait images (e.g., `jett.png`, `sage.png`).
+- `templates/agents/`: Agent portrait images (e.g., `jett.png`, `sage.png`). Templates can be prepared in any arbitrary convenient size.
 
 ### Configuration (Environment Variables)
 
@@ -66,6 +66,8 @@ Place templates in the following directory:
 | `CV_PORTRAIT_THRESHOLD` | `0.7` | Matching threshold for agent portraits |
 | `CV_TEMPORAL_K` | `3` | Minimum detections in window for positive signal |
 | `CV_TEMPORAL_N` | `5` | Sliding window size for temporal smoothing |
+| `CV_CALIBRATION_MAX_FRAMES` | `30` | Max frames to examine during automatic calibration |
+| `CV_FALLBACK_SIZE_PERCENT` | `0.08` | Fallback template height as % of ROI height |
 | `FUSION_COVERAGE_THRESHOLD` | `0.5` | Min temporal overlap to map speaker to agent |
 | `FUSION_CONFIDENCE_THRESHOLD` | `0.8` | Min CV confidence to map speaker to agent |
 

@@ -4,8 +4,22 @@ This document describes how to build and run the Valorant Pipeline using Docker.
 
 ## Building the Image
 
+By default, the build uses Docker BuildKit and a cache mount for `pip` to speed up subsequent builds.
+
+### Standard Build (Cached)
+
 ```bash
-docker build -t valorant-pipeline .
+DOCKER_BUILDKIT=1 docker build -t valorant-pipeline .
+```
+
+The first build will download all dependencies, but subsequent builds will reuse the `pip` download cache if `requirements.txt` hasn't changed, or only download new dependencies.
+
+### Clean Rebuild (No Cache)
+
+If you need to force a clean rebuild from scratch (e.g., to troubleshoot dependency issues):
+
+```bash
+DOCKER_BUILDKIT=1 docker build --no-cache -t valorant-pipeline .
 ```
 
 ## Running the CLI

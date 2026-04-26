@@ -63,12 +63,14 @@ def run_discovery_phase(
     detections_by_agent: Dict[str, List[Tuple[float, int, int, int, int]]] = {}
     
     template_size = agent_templates[0].image.shape[0]
+    last_frame_h: Optional[int] = None
     
     for ef in iter_frames(video_path, roi, target_fps=settings.cv_discovery_fps, debug_frames=False):
         frame = ef.frame
         if frame.size == 0:
             continue
             
+        last_frame_h = frame.shape[0]
         found_in_frame = False
         
         # Try primary scales first, then fallback
@@ -104,13 +106,8 @@ def run_discovery_phase(
         logger.warning("M4 – Discovery failed: no agents with >= %d detections, falling back", 
                        settings.cv_discovery_min_detections)
         
-        # Fallback: get a frame to calculate scale
-        try:
-            first_frame_iter = iter_frames(video_path, roi, target_fps=1.0, debug_frames=False)
-            first_ef = next(first_frame_iter)
-            frame_h = first_ef.frame.shape[0]
-        except (StopIteration, Exception):
-            frame_h = 100 # Very last resort
+        # Fallback: use last seen frame height to calculate scale
+        frame_h = last_frame_h or 100
             
         fallback_size_px = max(1, int(frame_h * settings.cv_fallback_size_percent))
         optimal_scale = fallback_size_px / template_size
@@ -192,22 +189,9 @@ def detect_speakers(
     # 1. Discovery Phase
     if settings.cv_skip_discovery:
         logger.info("M4 – skipping Discovery Phase as per settings")
-        
-        # Fallback scale based on ROI height
-        try:
-            first_frame_iter = iter_frames(video_path, roi, target_fps=1.0, debug_frames=False)
-            first_ef = next(first_frame_iter)
-            frame_h = first_ef.frame.shape[0]
-        except (StopIteration, Exception):
-            frame_h = 100
-            
-        template_size = agent_templates[0].image.shape[0]
-        fallback_size_px = max(1, int(frame_h * settings.cv_fallback_size_percent))
-        optimal_scale = fallback_size_px / template_size
-
         discovery = DiscoveryResult(
             active_agents={at.name for at in agent_templates},
-            median_scale=optimal_scale,
+            median_scale=-1.0,  # Sentinel for "calculate from first frame"
             anchor_zone=None,
             stats={}
         )
@@ -228,12 +212,15 @@ def detect_speakers(
     # This assumption must be preserved for correct agent identification.
     
     # Prepare resized images for the active agents
+    agent_images: Optional[List[np.ndarray]] = None
     template_size = active_templates[0].image.shape[0]
-    new_size = max(1, int(template_size * optimal_scale))
-    agent_images = [
-        cv2.resize(at.image, (new_size, new_size), interpolation=cv2.INTER_AREA)
-        for at in active_templates
-    ]
+
+    if optimal_scale > 0:
+        new_size = max(1, int(template_size * optimal_scale))
+        agent_images = [
+            cv2.resize(at.image, (new_size, new_size), interpolation=cv2.INTER_AREA)
+            for at in active_templates
+        ]
     
     raw_frame_detections: List[Dict[str, float]] = [] # list of {agent_name: confidence}
     timestamps: List[float] = []
@@ -257,6 +244,19 @@ def detect_speakers(
             continue
 
         total_frames += 1
+
+        # Initialize agent_images if not already done (e.g. if skip_discovery was used)
+        if agent_images is None:
+            if optimal_scale <= 0:
+                frame_h = frame.shape[0]
+                fallback_size_px = max(1, int(frame_h * settings.cv_fallback_size_percent))
+                optimal_scale = fallback_size_px / template_size
+            
+            new_size = max(1, int(template_size * optimal_scale))
+            agent_images = [
+                cv2.resize(at.image, (new_size, new_size), interpolation=cv2.INTER_AREA)
+                for at in active_templates
+            ]
         
         # Crop to Anchor Zone if available
         search_frame = frame

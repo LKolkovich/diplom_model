@@ -9,6 +9,7 @@ Provides:
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Any
 
@@ -25,6 +26,15 @@ SUPPORTED_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".webp"}
 # ---------------------------------------------------------------------------
 # Template Matching & NMS
 # ---------------------------------------------------------------------------
+
+@dataclass
+class MatchResult:
+    x: int
+    y: int
+    w: int
+    h: int
+    score: float
+
 
 def match_templates(
     image: np.ndarray,
@@ -65,6 +75,21 @@ def match_templates(
             all_detections.append((int(pt[0]), int(pt[1]), int(tw), int(th), float(score), t_idx))
             
     return all_detections
+
+
+def match_template(
+    image: np.ndarray,
+    template: np.ndarray,
+    threshold: float = 0.7,
+) -> Optional[MatchResult]:
+    """Thin wrapper around match_templates for legacy support."""
+    results = match_templates(image, [template], threshold)
+    if not results:
+        return None
+    # Return best match
+    best = max(results, key=lambda x: x[4])
+    return MatchResult(x=best[0], y=best[1], w=best[2], h=best[3], score=best[4])
+
 
 def non_max_suppression(
     boxes: List[Tuple[int, int, int, int, float, int]], 
@@ -189,3 +214,34 @@ def load_agent_templates(templates_dir: str | Path) -> List[AgentTemplate]:
 
     logger.info("Loaded %d agent templates from '%s'", len(templates), dirpath)
     return templates
+
+
+def identify_agent(
+    image: np.ndarray,
+    templates: List[AgentTemplate],
+    phash_threshold: int = 10,
+) -> tuple[Optional[str], float]:
+    """Identify which agent is in the image using pHash.
+    
+    Legacy abstraction used by some tests.
+    """
+    if not templates:
+        return None, 0.0
+    
+    target_hash = compute_phash(image)
+    best_name = None
+    min_dist = float('inf')
+    
+    for t in templates:
+        dist = phash_distance(target_hash, t.phash)
+        if dist < min_dist:
+            min_dist = dist
+            best_name = t.name
+            
+    if min_dist <= phash_threshold:
+        # Map distance to a 0-1 confidence score
+        # dist=0 -> 1.0, dist=phash_threshold -> 0.5?
+        confidence = 1.0 - (min_dist / (phash_threshold * 2))
+        return best_name, confidence
+    
+    return None, 0.0

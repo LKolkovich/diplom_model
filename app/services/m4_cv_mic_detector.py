@@ -14,7 +14,7 @@ Format cv_detections.jsonl (one JSON per line):
 }
 
 - timestamp_ms: used for manual validation (sync with video).
-- detections: confidence score for each agent in this frame after mic ↔ portrait linking.
+- detections: confidence score for each agent in this frame after portrait detection.
 """
 
 from __future__ import annotations
@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import List, Optional, Dict
 
 import cv2
+# pylint: disable=unused-import
 import numpy as np
 
 from app.models import CVDetection
@@ -32,7 +33,6 @@ from app.services.m2_frame_extractor import iter_frames
 from app.utils.cv_logic import (
     AgentTemplate,
     load_agent_templates,
-    load_simple_templates,
     match_templates,
     non_max_suppression,
 )
@@ -46,19 +46,15 @@ def detect_speakers(
     roi: Optional[tuple[float, float, float, float]],
     target_fps: int,
     agent_templates_dir: str | Path,
-    mic_templates_dir: str | Path,
     settings: Settings,
     debug_frames: bool = False,
     debug_frames_dir: Path | str = "debug_frames",
 ) -> tuple[List[CVDetection], int]:
-    """Run the full CV mic-detection pass over the video."""
+    """Run the full CV portrait-detection pass over the video."""
     agent_templates: List[AgentTemplate] = load_agent_templates(agent_templates_dir)
-    mic_templates: List[np.ndarray] = load_simple_templates(mic_templates_dir)
     
     if not agent_templates:
         logger.warning("No agent templates found in %s", agent_templates_dir)
-    if not mic_templates:
-        logger.warning("No mic templates found in %s", mic_templates_dir)
 
     agent_images = [at.image for at in agent_templates]
     
@@ -76,7 +72,7 @@ def detect_speakers(
         cv_debug_log = None
 
     for ef in iter_frames(
-        video_path, roi, target_fps, debug_raw_frames=False # Don't let M2 save raw debug frames, M4 will do it with overlays
+        video_path, roi, target_fps, debug_frames=False # Don't let M2 save raw debug frames, M4 will do it with overlays
     ):
         ts = ef.timestamp
         frame = ef.frame
@@ -84,45 +80,18 @@ def detect_speakers(
             continue
 
         total_frames += 1
-        h, w = frame.shape[:2]
         
-        # 1. Detect mic icons
-        mic_boxes = match_templates(frame, mic_templates, threshold=settings.cv_mic_threshold)
-        mic_boxes = non_max_suppression(mic_boxes)
-        
-        # 2. Detect portraits
+        # Detect portraits
         portrait_boxes = match_templates(frame, agent_images, threshold=settings.cv_portrait_threshold)
         portrait_boxes = non_max_suppression(portrait_boxes)
         
         active_this_frame: Dict[str, float] = {}
-        linked_mic_to_portrait = [] # for debug drawing
         
-        for mb in mic_boxes:
-            mx, my, mw, mh, ms, _ = mb
-            m_cx, m_cy = mx + mw/2, my + mh/2
-            
-            best_pb = None
-            min_dist_sq = float('inf')
-            
-            for pb in portrait_boxes:
-                px, py, pw, ph, ps, p_idx = pb
-                p_cx, p_cy = px + pw/2, py + ph/2
-                
-                dx = abs(m_cx - p_cx) / w
-                dy = abs(m_cy - p_cy) / h
-                
-                if dx <= settings.cv_dx_limit and dy <= settings.cv_dy_limit:
-                    dist_sq = dx*dx + dy*dy
-                    if dist_sq < min_dist_sq:
-                        min_dist_sq = dist_sq
-                        best_pb = pb
-            
-            if best_pb:
-                px, py, pw, ph, ps, p_idx = best_pb
-                agent_name = agent_templates[p_idx].name
-                # Use max confidence if same agent detected multiple times (shouldn't happen with NMS)
-                active_this_frame[agent_name] = max(active_this_frame.get(agent_name, 0.0), ps)
-                linked_mic_to_portrait.append((mb, best_pb))
+        for pb in portrait_boxes:
+            px, py, pw, ph, ps, p_idx = pb
+            agent_name = agent_templates[p_idx].name
+            # Use max confidence if same agent detected multiple times (shouldn't happen with NMS)
+            active_this_frame[agent_name] = max(active_this_frame.get(agent_name, 0.0), ps)
 
         raw_frame_detections.append(active_this_frame)
         timestamps.append(ts)
@@ -138,17 +107,11 @@ def detect_speakers(
             if debug_frames:
                 # Draw overlays
                 debug_img = frame.copy()
-                for mb in mic_boxes:
-                    x, y, w_b, h_b, s, _ = mb
-                    cv2.rectangle(debug_img, (x, y), (x + w_b, y + h_b), (0, 255, 0), 2)
                 for pb in portrait_boxes:
                     x, y, w_b, h_b, s, p_idx = pb
                     cv2.rectangle(debug_img, (x, y), (x + w_b, y + h_b), (255, 0, 0), 2)
-                    cv2.putText(debug_img, agent_templates[p_idx].name, (x, y - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 1)
-                for mb, pb in linked_mic_to_portrait:
-                    m_cx, m_cy = int(mb[0] + mb[2]/2), int(mb[1] + mb[3]/2)
-                    p_cx, p_cy = int(pb[0] + pb[2]/2), int(pb[1] + pb[3]/2)
-                    cv2.line(debug_img, (m_cx, m_cy), (p_cx, p_cy), (0, 255, 255), 1)
+                    label = f"{agent_templates[p_idx].name} ({s:.2f})"
+                    cv2.putText(debug_img, label, (x, y - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 1)
                 
                 ts_ms = int(ts * 1000)
                 dest = Path(debug_frames_dir) / f"frame_{ef.index:06d}_{ts_ms:08d}.png"

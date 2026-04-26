@@ -17,7 +17,7 @@ M0  Orchestrator
      │
      ├─► M3  WhisperXASR        – transcription + alignment + diarization
      │
-     ├─► M4  CVMicDetector      – template matching + NMS for multi-speaker IDs
+     ├─► M4  CVMicDetector      – template matching + NMS for active speaker portraits
      │
      ├─► M5  FusionEngine       – maps generic speaker IDs → agent names (Fusion Logic)
      │
@@ -51,12 +51,11 @@ curl -O http://localhost:8000/tasks/<task_id>/result
 
 ## CV Detection System
 
-The CV system (M4) detects speaking agents by matching templates for mic icons and agent portraits.
+The CV system (M4) detects speaking agents by matching templates for agent portraits. In this mode, we assume that agent portraits only appear in the voice chat panel when they are actively speaking.
 
 ### Templates
-Place templates in the following directories:
+Place templates in the following directory:
 - `templates/agents/`: Agent portrait images (e.g., `jett.png`, `sage.png`).
-- `templates/mic/`: Mic icon templates (used to detect the speaking indicator).
 
 ### Configuration (Environment Variables)
 
@@ -65,9 +64,6 @@ Place templates in the following directories:
 | `VIDEO_MODE` | `full_frame` | `full_frame` (use `VOICECHAT_ROI`) or `user_crop` |
 | `VOICECHAT_ROI` | `0.0,0.15,0.075,0.65` | Fractional ROI (x1,y1,x2,y2) for `full_frame` |
 | `CV_PORTRAIT_THRESHOLD` | `0.7` | Matching threshold for agent portraits |
-| `CV_MIC_THRESHOLD` | `0.7` | Matching threshold for mic icons |
-| `CV_DX_LIMIT` | `0.1` | Max horizontal distance (fraction) for mic-portrait linking |
-| `CV_DY_LIMIT` | `0.05` | Max vertical distance (fraction) for mic-portrait linking |
 | `CV_TEMPORAL_K` | `3` | Minimum detections in window for positive signal |
 | `CV_TEMPORAL_N` | `5` | Sliding window size for temporal smoothing |
 | `FUSION_COVERAGE_THRESHOLD` | `0.5` | Min temporal overlap to map speaker to agent |
@@ -76,7 +72,7 @@ Place templates in the following directories:
 ### Debug Artifacts
 
 When `DEBUG_FRAMES=true` is set in `.env`:
-- **Overlay Frames**: Saved to `debug_frames/frame_{idx}_{ts}.png`. Shows detected bounding boxes and mic-portrait links.
+- **Overlay Frames**: Saved to `debug_frames/frame_{idx}_{ts}.png`. Shows detected bounding boxes and agent names.
 - **CV Detections Log**: `debug_frames/cv_detections.jsonl`. Per-frame raw detections with timestamps and confidence scores.
 
 ## API Reference

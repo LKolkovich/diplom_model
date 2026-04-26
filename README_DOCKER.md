@@ -4,7 +4,7 @@ This document describes how to build and run the Valorant Pipeline using Docker.
 
 ## Building the Image
 
-By default, the build uses Docker BuildKit and a cache mount for `pip` to speed up subsequent builds.
+The following commands enable Docker BuildKit to use a cache mount for `pip`, which speeds up subsequent builds.
 
 ### Standard Build (Cached)
 

@@ -156,8 +156,9 @@ def run_discovery_phase(
             "bboxes": [(d[1], d[2], d[3], d[4]) for d in detections]
         }
     
-    logger.info("M4 – Discovery Phase COMPLETE: active agents: %s, optimal scale: %.3f, Anchor Zone: %s",
-                active_agent_names, optimal_scale, anchor_zone)
+    coverage = len(active_agent_names) / len(agent_templates)
+    logger.info("M4 – Discovery Phase COMPLETE: active agents: %s (coverage: %.1f%%), optimal scale: %.3f, Anchor Zone: %s",
+                active_agent_names, coverage * 100, optimal_scale, anchor_zone)
     
     return DiscoveryResult(
         active_agents=set(active_agent_names),
@@ -191,9 +192,22 @@ def detect_speakers(
     # 1. Discovery Phase
     if settings.cv_skip_discovery:
         logger.info("M4 – skipping Discovery Phase as per settings")
+        
+        # Fallback scale based on ROI height
+        try:
+            first_frame_iter = iter_frames(video_path, roi, target_fps=1.0, debug_frames=False)
+            first_ef = next(first_frame_iter)
+            frame_h = first_ef.frame.shape[0]
+        except (StopIteration, Exception):
+            frame_h = 100
+            
+        template_size = agent_templates[0].image.shape[0]
+        fallback_size_px = max(1, int(frame_h * settings.cv_fallback_size_percent))
+        optimal_scale = fallback_size_px / template_size
+
         discovery = DiscoveryResult(
             active_agents={at.name for at in agent_templates},
-            median_scale=0.1,
+            median_scale=optimal_scale,
             anchor_zone=None,
             stats={}
         )
@@ -300,7 +314,7 @@ def detect_speakers(
                     cv2.rectangle(debug_img, (x1, y1), (x2, y2), (0, 255, 0), 1)
 
                 for pb in portrait_boxes:
-                    x, y, w_b, h_b, s, p_idx in pb
+                    x, y, w_b, h_b, s, p_idx = pb
                     cv2.rectangle(debug_img, (x, y), (x + w_b, y + h_b), (255, 0, 0), 2)
                     label = f"{active_templates[p_idx].name} ({s:.2f})"
                     cv2.putText(debug_img, label, (x, y - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 1)

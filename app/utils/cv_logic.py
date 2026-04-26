@@ -203,7 +203,7 @@ def normalize_template(image: np.ndarray, target_size: int = 512) -> np.ndarray:
     
     # Add alpha channel if not present
     if len(image.shape) == 2:
-        image = cv2.cvtColor(image, cv2.COLOR_GRAY_BGRA)
+        image = cv2.cvtColor(image, cv2.COLOR_GRAY2BGRA)
     elif image.shape[2] == 3:
         image = cv2.cvtColor(image, cv2.COLOR_BGR2BGRA)
     

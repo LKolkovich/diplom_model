@@ -139,7 +139,6 @@ def run_pipeline(
             roi=roi,
             target_fps=settings.frame_rate,
             agent_templates_dir=portraits_override or settings.templates_dir,
-            mic_templates_dir=settings.mic_templates_dir,
             settings=settings,
             debug_frames=settings.debug_frames,
             debug_frames_dir=settings.debug_frames_dir,

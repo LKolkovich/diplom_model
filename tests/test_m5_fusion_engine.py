@@ -4,14 +4,15 @@ from __future__ import annotations
 
 from app.models import ASRSegment, CVDetection
 from app.services.m5_fusion_engine import _build_intervals, fuse
+from app.config import Settings
 
 
 def _seg(start: float, end: float, speaker: str, text: str = "hello") -> ASRSegment:
     return ASRSegment(start=start, end=end, text=text, speaker=speaker)
 
 
-def _det(ts: float, agent: str, conf: float = 0.9) -> CVDetection:
-    return CVDetection(frame_index=0, timestamp=ts, agent=agent, confidence=conf)
+def _det(ts: float, agent_name: str, conf: float = 0.9) -> CVDetection:
+    return CVDetection(timestamp=ts, agent_name=agent_name, confidence=conf)
 
 
 def test_build_intervals_merges_same_agent() -> None:
@@ -40,7 +41,12 @@ def test_build_intervals_different_agents() -> None:
 def test_fuse_maps_speaker_to_agent() -> None:
     segs = [_seg(1.0, 3.0, "SPEAKER_00", "rush b")]
     dets = [_det(1.5, "jett"), _det(2.0, "jett")]
-    result = fuse(segs, dets)
+    settings = Settings()
+    # Ensure thresholds are low enough for test data
+    settings.fusion_coverage_threshold = 0.1
+    settings.fusion_confidence_threshold = 0.1
+    
+    result = fuse(segs, dets, settings=settings)
     assert len(result) == 1
     assert result[0].speaker == "jett"
     assert result[0].text == "rush b"
@@ -48,7 +54,8 @@ def test_fuse_maps_speaker_to_agent() -> None:
 
 def test_fuse_no_cv_keeps_original_labels() -> None:
     segs = [_seg(1.0, 3.0, "SPEAKER_00")]
-    result = fuse(segs, [])
+    settings = Settings()
+    result = fuse(segs, [], settings=settings)
     assert result[0].speaker == "SPEAKER_00"
 
 
@@ -61,7 +68,11 @@ def test_fuse_multiple_speakers() -> None:
         _det(0.5, "jett"), _det(1.0, "jett"),
         _det(3.5, "reyna"), _det(4.0, "reyna"),
     ]
-    result = fuse(segs, dets)
+    settings = Settings()
+    settings.fusion_coverage_threshold = 0.1
+    settings.fusion_confidence_threshold = 0.1
+    
+    result = fuse(segs, dets, settings=settings)
     speakers = {s.speaker for s in result}
     assert "jett" in speakers
     assert "reyna" in speakers

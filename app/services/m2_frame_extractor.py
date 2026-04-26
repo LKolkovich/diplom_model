@@ -11,6 +11,7 @@ so the same configuration works for any source resolution.
 from __future__ import annotations
 
 import logging
+# pylint: disable=unused-import
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator, Tuple, Optional
@@ -50,8 +51,9 @@ def iter_frames(
     video_path: str | Path,
     roi: Optional[Tuple[float, float, float, float]],
     target_fps: int = 5,
-    debug_raw_frames: bool = False,
+    debug_frames: bool = False,
     debug_frames_dir: Path | str = "debug_frames",
+    **kwargs,
 ) -> Iterator[ExtractedFrame]:
     """Yield ROI-cropped frames at *target_fps* frames per second.
 
@@ -63,7 +65,7 @@ def iter_frames(
         Fractional (x1, y1, x2, y2) region of interest. If None, yield full frames.
     target_fps:
         How many frames per second to sample.
-    debug_raw_frames:
+    debug_frames:
         If True, save raw extracted frames as PNG files to *debug_frames_dir*.
         When called from M4, this should typically be False as M4 handles its own
         debug output (overlay frames).
@@ -78,6 +80,9 @@ def iter_frames(
     path = Path(video_path)
     cap = _open_capture(path)
 
+    # Backward compatibility for debug_raw_frames
+    debug_frames = debug_frames or kwargs.get("debug_raw_frames", False)
+
     native_fps: float = cap.get(cv2.CAP_PROP_FPS) or 30.0
     frame_interval = max(1, round(native_fps / target_fps))
 
@@ -90,7 +95,7 @@ def iter_frames(
         roi,
     )
 
-    if debug_raw_frames:
+    if debug_frames:
         debug_dir = Path(debug_frames_dir)
         debug_dir.mkdir(parents=True, exist_ok=True)
         logger.info("M2 – debug raw frames enabled, saving to %s", debug_dir)
@@ -114,7 +119,7 @@ def iter_frames(
                 else:
                     roi_frame = bgr
 
-                if debug_raw_frames and debug_dir:
+                if debug_frames and debug_dir:
                     # Save as PNG
                     ts_ms = int(timestamp * 1000)
                     dest = debug_dir / f"frame_{sampled_idx:06d}_{ts_ms:08d}.png"
@@ -144,7 +149,7 @@ def extract_frames_to_disk(
     out.mkdir(parents=True, exist_ok=True)
 
     paths: list[Path] = []
-    for ef in iter_frames(video_path, roi, target_fps, debug_raw_frames=False):
+    for ef in iter_frames(video_path, roi, target_fps, debug_frames=False):
         # Save as JPEG for better compatibility/size than PNG for this use case
         dest = out / f"frame_{ef.index:06d}_{ef.timestamp:.3f}s.jpg"
         cv2.imwrite(str(dest), ef.frame, [cv2.IMWRITE_JPEG_QUALITY, 90])

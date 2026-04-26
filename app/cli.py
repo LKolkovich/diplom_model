@@ -57,7 +57,7 @@ def main():
     m2_parser.add_argument("--fps", type=int, default=5, help="Target FPS")
 
     # Run M4 only
-    m4_parser = subparsers.add_parser("run_m4", help="Run only M4: CV Mic Detection")
+    m4_parser = subparsers.add_parser("run_m4", help="Run only M4: CV Portrait Detection")
     m4_parser.add_argument("video_path", help="Path to input video")
     m4_parser.add_argument("output_json", help="Path to output detections JSON")
     m4_parser.add_argument("--roi", help="Explicit ROI (x1,y1,x2,y2). Used only if video-mode is full_frame.")
@@ -132,14 +132,13 @@ def run_m4(args):
     
     templates_dir = args.templates_dir or settings.templates_dir
     
-    logger.info("Running CV mic detection on %s (mode=%s, ROI=%s)...", 
+    logger.info("Running CV portrait detection on %s (mode=%s, ROI=%s)...", 
                 args.video_path, args.video_mode, roi)
     cv_detections, total_frames = detect_speakers(
         video_path=args.video_path,
         roi=roi,
         target_fps=args.fps,
         agent_templates_dir=templates_dir,
-        mic_templates_dir=settings.mic_templates_dir,
         settings=settings,
         debug_frames=bool(args.debug_dir),
         debug_frames_dir=args.debug_dir if args.debug_dir else "debug_frames"

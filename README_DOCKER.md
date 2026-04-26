@@ -54,7 +54,7 @@ docker run --rm `
   python -m app.cli run_m2 /workspace/data/video.mp4 /workspace/output/frames --fps 5
 ```
 
-### CV Mic Detection (M4)
+### CV Portrait Detection (M4)
 
 **Bash:**
 ```bash
@@ -102,7 +102,7 @@ docker run --rm valorant-pipeline pytest
 
 - `run_pipeline`: Runs the complete M1-M6 pipeline.
 - `run_m2`: Runs only frame extraction and saves frames to disk.
-- `run_m4`: Runs CV mic detection, outputs a JSON of detections, and optionally saves debug overlay frames.
+- `run_m4`: Runs CV portrait detection, outputs a JSON of detections, and optionally saves debug overlay frames.
 
 ### Video Modes
 

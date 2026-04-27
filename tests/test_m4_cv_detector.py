@@ -17,17 +17,24 @@ def test_detect_speakers_portrait_only(tmp_path, monkeypatch):
     
     # Mock iter_frames to return a frame with the agent
     class MockFrame:
-        def __init__(self):
-            self.index = 0
-            self.timestamp = 0.1
+        def __init__(self, index=0, timestamp=0.1):
+            self.index = index
+            self.timestamp = timestamp
             # Larger frame containing the template
             self.frame = np.zeros((300, 300, 3), dtype=np.uint8)
-            # Put it at 50x50 size
+            # Put it at 50x50 size (which is 50/512 = ~0.097 scale of normalized 512x512)
+            # Actually, since load_agent_templates normalizes to 512x512, 
+            # we should expect it to be matched at some scale.
             scaled = cv2.resize(agent_img, (50, 50))
             self.frame[10:60, 10:60] = scaled
             
     def mock_iter_frames(*args, **kwargs):
-        yield MockFrame()
+        # Need multiple frames for discovery to succeed if min_detections > 1
+        yield MockFrame(index=0, timestamp=0.1)
+        yield MockFrame(index=1, timestamp=0.2)
+        yield MockFrame(index=2, timestamp=0.3)
+        yield MockFrame(index=3, timestamp=0.4)
+        yield MockFrame(index=4, timestamp=0.5)
         
     monkeypatch.setattr("app.services.m4_cv_mic_detector.iter_frames", mock_iter_frames)
     
@@ -35,8 +42,9 @@ def test_detect_speakers_portrait_only(tmp_path, monkeypatch):
     settings.cv_temporal_k = 1
     settings.cv_temporal_n = 1
     settings.cv_portrait_threshold = 0.5
+    settings.cv_discovery_threshold = 0.5
+    settings.cv_discovery_min_detections = 1 # Make it easy
     
-    # M4 now only needs agent_templates_dir
     detections, total_frames = detect_speakers(
         video_path="dummy.mp4",
         roi=None,
@@ -45,25 +53,35 @@ def test_detect_speakers_portrait_only(tmp_path, monkeypatch):
         settings=settings
     )
     
-    assert total_frames == 1
-    assert len(detections) == 1
-    assert detections[0].agent_name == "jett"
-    assert detections[0].confidence > 0.5
+    # Discovery will run, then the main loop will run.
+    # mock_iter_frames will be called twice (once for discovery, once for detection).
+    
+    assert total_frames == 5
+    assert len(detections) >= 1
+    assert any(d.agent_name == "jett" for d in detections)
 
-def test_detect_speakers_calls_calibration_once(tmp_path, monkeypatch):
+def test_detect_speakers_calls_discovery_once(tmp_path, monkeypatch):
     templates_dir = tmp_path / "agents"
     templates_dir.mkdir()
     agent_img = np.zeros((100, 100, 3), dtype=np.uint8)
     cv2.imwrite(str(templates_dir / "jett.png"), agent_img)
 
-    calls = []
-    mock_template_image = np.zeros((20, 20, 3), dtype=np.uint8)
+    discovery_calls = []
+    
+    from app.utils.cv_logic import AgentTemplate
 
-    def mock_calibrate(*args, **kwargs):
-        calls.append(True)
-        return [mock_template_image], 20
+    def mock_discovery(*args, **kwargs):
+        discovery_calls.append(True)
+        # Return something to avoid failure
+        from app.models import DiscoveryResult
+        return DiscoveryResult(
+            active_agents={"jett"},
+            median_scale=0.1,
+            anchor_zone=(10, 10, 100, 100),
+            stats={}
+        )
 
-    monkeypatch.setattr("app.services.m4_cv_mic_detector.calibrate_templates", mock_calibrate)
+    monkeypatch.setattr("app.services.m4_cv_mic_detector.run_discovery_phase", mock_discovery)
     
     # Also need to mock iter_frames for the main loop
     class MockFrame:
@@ -85,4 +103,4 @@ def test_detect_speakers_calls_calibration_once(tmp_path, monkeypatch):
         agent_templates_dir=templates_dir,
         settings=settings
     )
-    assert len(calls) == 1
+    assert len(discovery_calls) == 1

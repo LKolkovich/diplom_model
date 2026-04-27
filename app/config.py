@@ -1,6 +1,6 @@
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal, Tuple
+from typing import Literal, Tuple, Optional, List
 
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -28,6 +28,11 @@ class Settings(BaseSettings):
 
     # CV Settings
     cv_portrait_threshold: float = 0.7
+    cv_discovery_threshold: float = 0.65
+    cv_discovery_min_detections: int = 5
+    cv_discovery_fps: float = 1.0
+    cv_agents_list: Optional[str] = None  # Comma-separated list of agent names
+    cv_skip_discovery: bool = False
     cv_temporal_k: int = 3
     cv_temporal_n: int = 5
     cv_calibration_max_frames: int = 30

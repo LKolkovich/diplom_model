@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Dict, List, Optional, Literal, Set
+from typing import Dict, List, Literal, Optional, Set
 
 from pydantic import BaseModel, Field
 
@@ -69,11 +69,24 @@ class SRTSegment(BaseModel):
     text: str
 
 
+class SpeakerAgentCandidate(BaseModel):
+    """Per-segment attribution candidate produced by M5 Phase 2."""
+
+    agent: str
+    score: float        # combined score: alpha*diar_score + beta*cv_score
+    diar_score: float   # contribution from M3 global map + speaker_candidates
+    cv_score: float     # contribution from M4 per-segment overlap
+
+
 class FusedSegment(BaseModel):
     start: float
     end: float
-    speaker: str
+    speaker: str        # итоговый агент/лейбл (или SPEAKER_XX если unresolved)
     text: str
+    speaker_candidates: List[SpeakerAgentCandidate] = Field(default_factory=list)
+    attribution_confidence: float = 0.0
+    attribution_source: str = "unresolved"
+    # "cv+diar" | "cv_only" | "map_only" | "unresolved"
 
 
 class ASRWord(BaseModel):
@@ -83,12 +96,18 @@ class ASRWord(BaseModel):
     score: float = 0.0
 
 
+class ASRSpeakerCandidate(BaseModel):
+    speaker_id: str
+    weight: float  # 0..1, не обязательно нормировано
+
+
 class ASRSegment(BaseModel):
     start: float
     end: float
     text: str
     speaker: str = "UNKNOWN"
     words: List[ASRWord] = Field(default_factory=list)
+    speaker_candidates: List[ASRSpeakerCandidate] = Field(default_factory=list)
 
 
 class CVDetection(BaseModel):

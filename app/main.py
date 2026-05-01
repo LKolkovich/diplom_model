@@ -1,156 +1,145 @@
-"""FastAPI application entry-point.
-
-Endpoints
----------
-POST /tasks
-    Accepts a video file and an optional JSON config via multipart/form-data.
-    Enqueues the M1-M6 pipeline as a background task. Returns a task_id.
-
-GET /tasks/{task_id}
-    Returns current status, progress, stage, and message.
-
-GET /tasks/{task_id}/result
-    When the task has completed, returns a ZIP file containing the SRT files
-    and metadata.json.
-
-GET /health
-    Liveness probe.
-"""
-
 from __future__ import annotations
 
-import json
 import logging
-import shutil
-from pathlib import Path
-from typing import List, Optional
+import logging.config
+import time
+from contextlib import asynccontextmanager
+from typing import Awaitable, Callable
 
-from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile, BackgroundTask
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, Request, Response
+from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.router import router
 from app.config import get_settings
-from app.models import (
-    ProcessConfig,
-    ProcessResponse,
-    StatusResponse,
-    TaskStatus,
-)
-from app.orchestrator import create_task, delete_task, get_task, run_pipeline
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s – %(message)s",
-)
+
+LOGGING_CONFIG: dict = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "default": {
+            "format": "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
+            "datefmt": "%Y-%m-%dT%H:%M:%S",
+        },
+    },
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+            "formatter": "default",
+            "stream": "ext://sys.stdout",
+        },
+    },
+    "root": {
+        "level": "INFO",
+        "handlers": ["console"],
+    },
+    "loggers": {
+        "app": {"level": "DEBUG", "propagate": True},
+        "uvicorn.access": {"level": "WARNING", "propagate": True},
+    },
+}
+
+logging.config.dictConfig(LOGGING_CONFIG)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(
-    title="Valorant Subtitle Generation API",
-    description=(
-        "Transcribes and diarises Valorant in-game voice chat recordings using "
-        "WhisperX (ASR) and a CV-based mic-activity detector (pHash + template matching)."
-    ),
-    version="1.0.0",
-)
+
+class MaxBodySizeMiddleware:
+    """
+    Ограничение тела запроса по Content-Length.
+    Если заголовка нет, запрос пропускаем дальше — реальный hard-limit
+    лучше еще продублировать на уровне ingress/nginx.
+    """
+
+    def __init__(self, app, max_size_bytes: int) -> None:
+        self.app = app
+        self.max_size_bytes = max_size_bytes
+
+    async def __call__(
+            self,
+            scope,
+            receive: Callable[[], Awaitable],
+            send: Callable,
+    ) -> None:
+        if scope["type"] == "http":
+            headers = dict(scope.get("headers", []))
+            raw_length = headers.get(b"content-length")
+            if raw_length is not None:
+                try:
+                    content_length = int(raw_length)
+                    if content_length > self.max_size_bytes:
+                        logger.warning(
+                            "Request rejected: content_length=%d max_size_bytes=%d",
+                            content_length,
+                            self.max_size_bytes,
+                        )
+                        response = Response(
+                            content=(
+                                f'{{"detail":"Request body too large. '
+                                f'Max allowed: {self.max_size_bytes} bytes"}}'
+                            ),
+                            status_code=413,
+                            media_type="application/json",
+                        )
+                        await response(scope, receive, send)
+                        return
+                except ValueError:
+                    logger.warning("Invalid Content-Length header: %r", raw_length)
+
+        await self.app(scope, receive, send)
 
 
-@app.get("/health", tags=["meta"])
-def health() -> dict:
+@asynccontextmanager
+async def lifespan(app: FastAPI):
     settings = get_settings()
-    return {
-        "status": "ok",
-        "mock_mode": settings.mock_mode,
-        "version": "1.0.0",
-        "whisper_model": settings.whisper_model,
-        "device": settings.device,
-    }
+    logger.info(
+        "Starting service | tmp_dir=%s output_dir=%s auto_cleanup=%s max_upload_size_bytes=%s",
+        getattr(settings, "tmp_dir", "tmp"),
+        getattr(settings, "output_dir", "output"),
+        getattr(settings, "auto_cleanup", False),
+        getattr(settings, "max_upload_size_bytes", None),
+    )
+    yield
+    logger.info("Shutting down service")
 
 
-@app.post("/tasks", response_model=ProcessResponse, status_code=202, tags=["pipeline"])
-async def create_task_endpoint(
-    background_tasks: BackgroundTasks,
-    video: UploadFile = File(...),
-    config: str = Form("{}"),
-    portraits: List[UploadFile] = File(default=[]),
-) -> ProcessResponse:
+def create_app() -> FastAPI:
     settings = get_settings()
-    task_id = create_task()
 
-    # Save uploaded file
-    task_dir = settings.output_dir / task_id
-    task_dir.mkdir(parents=True, exist_ok=True)
-    video_path = task_dir / video.filename
-    with video_path.open("wb") as buffer:
-        shutil.copyfileobj(video.file, buffer)
-
-    portraits_dir: Optional[Path] = None
-    if portraits:
-        portraits_dir = task_dir / "portraits"
-        portraits_dir.mkdir(parents=True, exist_ok=True)
-        for portrait_file in portraits:
-            dest = portraits_dir / portrait_file.filename
-            with dest.open("wb") as buf:
-                shutil.copyfileobj(portrait_file.file, buf)
-        logger.info("Saved %d portrait(s) to %s", len(portraits), portraits_dir)
-
-    try:
-        config_dict = json.loads(config)
-        process_config = ProcessConfig(**config_dict)
-    except Exception as e:
-        logger.error("Invalid config JSON: %s", e)
-        raise HTTPException(status_code=400, detail=f"Invalid config JSON: {e}")
-
-    background_tasks.add_task(
-        run_pipeline,
-        task_id,
-        str(video_path),
-        process_config,
-        settings,
-        str(portraits_dir) if portraits_dir else None,
-    )
-    logger.info("Queued task %s for video: %s", task_id, video.filename)
-    return ProcessResponse(
-        task_id=task_id,
-        message="Task created. Poll /tasks/{task_id} for progress.",
+    app = FastAPI(
+        title="Valorant Voice Pipeline",
+        version="1.0.0",
+        lifespan=lifespan,
     )
 
-
-@app.get("/tasks/{task_id}", response_model=StatusResponse, tags=["pipeline"])
-def get_task_status(task_id: str) -> StatusResponse:
-    task = get_task(task_id)
-    if task is None:
-        raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found")
-    return StatusResponse(
-        task_id=task.task_id,
-        status=task.status,
-        progress=task.progress,
-        stage=task.stage,
-        message=task.message,
-        current_module=task.current_module,
-        error=task.error,
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=getattr(settings, "cors_allow_origins", ["*"]),
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
     )
 
+    app.add_middleware(
+        MaxBodySizeMiddleware,
+        max_size_bytes=getattr(settings, "max_upload_size_bytes", 2 * 1024 * 1024 * 1024),
+    )
 
-@app.get("/tasks/{task_id}/result", tags=["pipeline"])
-def get_task_result(task_id: str) -> FileResponse:
-    task = get_task(task_id)
-    if task is None:
-        raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found")
-    if task.status != TaskStatus.completed:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Task is {task.status.value}. Result only available when completed.",
+    @app.middleware("http")
+    async def request_logging_middleware(request: Request, call_next) -> Response:
+        started = time.perf_counter()
+        response = await call_next(request)
+        elapsed_ms = (time.perf_counter() - started) * 1000
+        logger.info(
+            "%s %s | status=%d elapsed_ms=%.1f",
+            request.method,
+            request.url.path,
+            response.status_code,
+            elapsed_ms,
         )
+        return response
 
-    zip_path = task.result_files.get("zip")
-    if not zip_path or not Path(zip_path).exists():
-        raise HTTPException(status_code=404, detail="Result ZIP not found")
+    app.include_router(router, prefix="/tasks")
+    return app
 
-    # Pop task before returning — result is single-use
-    delete_task(task_id)
 
-    return FileResponse(
-        path=zip_path,
-        media_type="application/zip",
-        filename=f"{task_id}_results.zip",
-        background=BackgroundTask(lambda: Path(zip_path).unlink(missing_ok=True)),
-    )
+app = create_app()

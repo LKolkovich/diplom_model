@@ -129,7 +129,7 @@ def run_pipeline(
             hf_token=settings.hf_token,
             min_speakers=config.min_speakers,
             max_speakers=config.max_speakers,
-            initial_prompt=config.initial_prompt,
+            # initial_prompt=config.initial_prompt,
         )
 
         _update(task, "DETECTING_MIC", ModuleTag.m4_cv)
